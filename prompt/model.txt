@@ -1,0 +1,11 @@
+你需要知道的背景知识如下：
+1、我的目标是想做基于AI的mimo-ofdm信道估计
+2、目前通过仿真实验获取的数据集如下
+    - 发射数据：[numDataSubcarriers, numSymbols, numTransmitAntennas]
+    - 接收数据：[numDataSubcarriers, numSymbols, numReceiveAntennas]
+    - 发射导频：[numPilotSubcarriers, numSymbols, numTransmitAntennas]
+    - 接收导频：[numPilotSubcarriers, numSymbols, numReceiveAntennas]
+    - CSI矩阵：[numDataSubcarriers+numPilotSubcarriers, numSymbols, numTransmitAntennas, numReceiveAntennas]
+    - 数据符号index:[numDataSubcarriers,1]
+    - 导频符号index:[numPilotSubcarriers, numSymbols, numTransmitAntennas]
+3、
