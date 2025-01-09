@@ -75,13 +75,14 @@ mimoChannel = comm.MIMOChannel(...
 errorRate = comm.ErrorRate;
 
 % 超参数
-batchSize = 500;
+batchSize = 1;
 % 数据定义
 txSignalData = zeros(batchSize, numValidSubc, numSym, numTx, 2);
 rxSignalData = zeros(batchSize, numValidSubc, numSym, numRx, 2);
 csiData = zeros(batchSize, numValidSubc, numSym, numTx, numRx, 2);
 txPilotSignalData = zeros(batchSize, numValidSubc, numSym, numTx, 2);
 rxPilotSignalData = zeros(batchSize, numValidSubc, numSym, numRx, 2);
+
 for i = 1:batchSize
     %% 数据发送与接收
     % 数据符号生成
@@ -96,9 +97,16 @@ for i = 1:batchSize
     pilotQPSKSymbols = [1+1i, 1+1i, 1+1i, 1+1i];
     pilotSignal = pilotQPSKSymbols(randi(length(pilotQPSKSymbols), numPilot, numSym, numTx));
     
+    originSignal = zeros(numSubc, numSym, numTx);
+    originSignal(dataIndices, :, :) = dataSignal;
+    for tx = 1:numTx
+        for sym = 1:numSym
+            originSignal(pilotIndices(:,sym,tx),sym,tx) = pilotSignal(:, sym, tx);
+        end
+    end
+    
     % OFDM 调制
     txSignal = ofdmMod(dataSignal, pilotSignal); % 结果为 (80 × 14 × 2)，包含循环前缀的时域信号
-    
     
     % 通过信道模型获取接收信号和路径增益
     [transmitSignal, pathGains] = mimoChannel(txSignal); % pathGains: [总样本数, N_path, numTransmitAntennas, numReceiveAntennas]
@@ -114,12 +122,28 @@ for i = 1:batchSize
     
     % OFDM 解调
     [rxDataSignal, rxPilotSignal] = ofdmDemod(transmitSignal);
-
+    
+    rxSignal = zeros(numSubc, numSym, numRx);
+    rxSignal(dataIndices, :, :) = rxDataSignal(:,:,:);
+    for rx = 1:numRx
+        for tx = 1:numTx
+            for sym = 1:numSym
+            rxSignal(pilotIndices(:,sym,tx),sym,rx) = rxPilotSignal(:,sym,tx,rx);
+            end
+        end
+    end
+    
     %% 数据保存
     % csi
     csiData(i,:,:,:,:,1) = real(h);
     csiData(i,:,:,:,:,2) = imag(h);
-        
+    % 发送信号（实部和虚部分离）
+    txSignalData(i,:,:,:,1) = real(originSignal(validSubcIndices, :, :));
+    txSignalData(i,:,:,:,2) = imag(originSignal(validSubcIndices, :, :));
+    % 接收信号（实部和虚部分离）
+    rxSignalData(i,:,:,:,1) = real(rxSignal(validSubcIndices, :, :));
+    rxSignalData(i,:,:,:,2) = imag(rxSignal(validSubcIndices, :, :));
+
     % 发送导频信号（实部和虚部分离）
     txPilotOverallSignal = zeros(numSubc, numSym, numTx);
     for tx = 1:numTx
@@ -127,9 +151,9 @@ for i = 1:batchSize
             txPilotOverallSignal(pilotIndices(:,sym,tx), sym, tx) = pilotSignal(:, sym, tx);
         end
     end
-
     txPilotSignalData(i,:,:,:,1) = real(txPilotOverallSignal(validSubcIndices,:,:)); % 实部
     txPilotSignalData(i,:,:,:,2) = imag(txPilotOverallSignal(validSubcIndices,:,:)); % 虚部
+    
     % 接收导频符号（实部和虚部分离）
     rxPilotOverallSignal = zeros(numSubc, numSym, numRx);
     for rx = 1:numRx
@@ -141,15 +165,18 @@ for i = 1:batchSize
     end
     rxPilotSignalData(i,:,:,:,1) = real(rxPilotOverallSignal(validSubcIndices,:,:)); % 实部
     rxPilotSignalData(i,:,:,:,2) = imag(rxPilotOverallSignal(validSubcIndices,:,:)); % 虚部
-
 end
 
 dataIndicesData = dataIndices-numGuardBands(1);
 pilotIndicesData = pilotIndices-numGuardBands(1);
 % 保存批量数据到文件
-save('trainDataDemo.mat', ...
+save('trainDataTrain.mat', ...
     'csiData', ...
+    'txSignalData',...
+    'rxSignalData',...
     'rxPilotSignalData', ...
     'txPilotSignalData',...
+    'dataIndicesData',...
+    'pilotIndicesData',...
     '-v7.3');
 
