@@ -167,8 +167,8 @@ for i = 1:batchSize
     rxPilotSignalData(i,:,:,:,2) = imag(rxPilotOverallSignal(validSubcIndices,:,:)); % 虚部
 end
 
-dataIndicesData = dataIndices-numGuardBands(1);
-pilotIndicesData = pilotIndices-numGuardBands(1);
+dataIndicesData = dataIndices-numGuardBands(1)-1; % 从0开始
+pilotIndicesData = pilotIndices-numGuardBands(1)-1; % 从0开始
 % 保存批量数据到文件
 save('trainDataTrain.mat', ...
     'csiData', ...
