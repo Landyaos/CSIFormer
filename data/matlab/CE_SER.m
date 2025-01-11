@@ -1,6 +1,6 @@
 %% 参数设置
 % 系统参数配置
-numSubFrame = 10;                                       % 子帧数量
+numSubFrame = 10;                                         % 子帧数量
 snrValues = 0:5:30;                                       % 信噪比范围
 numSubc = 64;                                             % FFT 长度
 numGuardBands = [6;6];                                    % 左右保护带

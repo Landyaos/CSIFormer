@@ -1,5 +1,7 @@
 %% 参数设置
 % 系统参数配置
+numSubFrame = 10;                                         % 子帧数量
+snrValues = 0:5:30;                                       % 信噪比范围
 SNR = 20;                                                 % 信噪比
 numSubc = 64;                                             % FFT 长度
 numGuardBands = [6;6];                                    % 左右保护带
@@ -69,21 +71,22 @@ mimoChannel = comm.MIMOChannel(...
     'NumTransmitAntennas', numTx, ...
     'NumReceiveAntennas', numRx, ...
     'FadingDistribution', 'Rayleigh', ...
+    'RandomStream', 'mt19937ar with seed', ...
+    'Seed', 123, ... % 固定随机种子
     'PathGainsOutputPort', true);   % 开启路径增益输出
-
 % 评价体系
 errorRate = comm.ErrorRate;
 
 % 超参数
-batchSize = 50000;
+dataSize = 50000;
 % 数据定义
-txSignalData = zeros(batchSize, numValidSubc, numSym, numTx, 2);
-rxSignalData = zeros(batchSize, numValidSubc, numSym, numRx, 2);
-csiData = zeros(batchSize, numValidSubc, numSym, numTx, numRx, 2);
-txPilotSignalData = zeros(batchSize, numValidSubc, numSym, numTx, 2);
-rxPilotSignalData = zeros(batchSize, numValidSubc, numSym, numRx, 2);
+txSignalData = zeros(dataSize, numValidSubc, numSym, numTx, 2);
+rxSignalData = zeros(dataSize, numValidSubc, numSym, numRx, 2);
+csiData = zeros(dataSize, numValidSubc, numSym, numTx, numRx, 2);
+txPilotSignalData = zeros(dataSize, numValidSubc, numSym, numTx, 2);
+rxPilotSignalData = zeros(dataSize, numValidSubc, numSym, numRx, 2);
 
-for i = 1:batchSize
+for i = 1:dataSize
     %% 数据发送与接收
     % 数据符号生成
     txSymStream = randi([0 M-1], numSubFrameSym, 1); 
