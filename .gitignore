@@ -2,3 +2,4 @@
 data/raw
 checkpoints
 data/matlab/metric
+models/
