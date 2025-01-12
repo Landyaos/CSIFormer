@@ -48,6 +48,8 @@ dataIndices = setdiff((numGuardBands(1)+1):(numSubc-numGuardBands(2)),unique(pil
 numDataSubc = length(dataIndices);
 numSubFrameSym = numDataSubc * numSym * numTx;
 
+dataIndiceMask = dataIndices - numGuardBands(1);
+
 % OFDM调制器
 ofdmMod = comm.OFDMModulator('FFTLength', numSubc, ...
                              'NumGuardBandCarriers', numGuardBands, ...
@@ -114,6 +116,7 @@ msePerfectLMMSE = zeros(length(snrValues), 1);
 txSignalData = zeros(length(snrValues), numSubFrame, numValidSubc, numSym, numTx, 2);
 rxSignalData = zeros(length(snrValues), numSubFrame, numValidSubc, numSym, numRx, 2);
 csiData = zeros(length(snrValues), numSubFrame, numValidSubc, numSym, numTx, numRx, 2);
+txSymStreamData = zeros(length(snrValues), numSubFrame, numSubFrameSym,1);
 
 for idx = 1:length(snrValues)
     
@@ -128,13 +131,14 @@ for idx = 1:length(snrValues)
     reset(errorRateMMSEZF);
     reset(errorRateMMSEMMSE);
     
-    snrMSE_MMSE = 0; % 用于累计MMSE的MSE
-    snrMSE_LS = 0;   % 用于累计LS的MSE
-    snrMSE_LMMSE = 0; % 用于累计LMMSE的MSE
+    snrEstimateMSE_MMSE = 0; % 用于累计MMSE的MSE
+    snrEstimateMSE_LS = 0;   % 用于累计LS的MSE
+    snrEstimateMSE_LMMSE = 0; % 用于累计LMMSE的MSE
     
     for frame = 1:numSubFrame
         % 数据符号生成&调制
         txSymStream = randi([0 M-1], numSubFrameSym, 1); 
+        txSymStreamData(idx, frame,:,:) = txSymStream;
         dataSignal = pskmod(txSymStream, M);  
         dataSignal = reshape(dataSignal, numDataSubc, numSym, numTx);
         % 导频符号生成
@@ -155,10 +159,10 @@ for idx = 1:length(snrValues)
         % 噪声模型：传输信号&噪声功率
         [transmitSignal, noiseVar] = awgn(transmitSignal, snr, "measured");
         % OFDM解调: 接收数据信号&接收导频信号 NPilot-by-NSym-by-NT-by-NR
-        [rxDataSymbols, rxPilotSymbols] = ofdmDemod(transmitSignal);
+        [rxDataSignal, rxPilotSignal] = ofdmDemod(transmitSignal);
         % 接收信号采集
         rxSignal = zeros(numSubc, numSym, numRx);
-        rxSignal(dataIndices, :, :) = rxDataSignal(:,:,:);
+        rxSignal(dataIndices,:,:) = rxDataSignal(:,:,:);
         for rx = 1:numRx
             for tx = 1:numTx
                 for sym = 1:numSym
@@ -166,6 +170,14 @@ for idx = 1:length(snrValues)
                 end
             end
         end 
+
+        % 完美CSI
+        mimoChannelInfo = info(mimoChannel);
+        pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
+        toffset = mimoChannelInfo.ChannelFilterDelay;
+        h = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, validSubcIndices, toffset); % Nsc x Nsym x Nt x Nr
+        hPerfect = h(dataIndiceMask,:,:,:);
+
         % 测试数据集采集
         txSignalData(idx, frame,:,:,:,1) = real(originSignal(validSubcIndices,:,:));
         txSignalData(idx, frame,:,:,:,2) = imag(originSignal(validSubcIndices,:,:));
@@ -176,56 +188,51 @@ for idx = 1:length(snrValues)
 
         %% 信道估计
 
-        % 完美CSI
-        mimoChannelInfo = info(mimoChannel);
-        pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
-        toffset = mimoChannelInfo.ChannelFilterDelay;
-        hPerfect = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, dataIndices, toffset); % Nsc x Nsym x Nt x Nr
         
         % LS信道估计
         CEC.algorithm = 'ls';
-        hLS = channelEstimate(rxPilotSymbols, pilotSignal, dataIndices, pilotIndices, CEC);
-        snrMSE_LS = snrMSE_LS + mean(abs(hPerfect(:) - hLS(:)).^2);
+        hLS = channelEstimate(rxPilotSignal, pilotSignal, dataIndices, pilotIndices, CEC);
+        snrEstimateMSE_LS = snrEstimateMSE_LS + mean(abs(hPerfect(:) - hLS(:)).^2);
 
         % MMSE信道估计
         CEC.algorithm = 'ls';
-        hMMSE = channelEstimate(rxPilotSymbols, pilotSignal, dataIndices, pilotIndices, CEC);
+        hMMSE = channelEstimate(rxPilotSignal, pilotSignal, dataIndices, pilotIndices, CEC);
         msePerfectMMSE(idx) = mean(abs(hPerfect(:) - hMMSE(:)).^2);
-        snrMSE_MMSE = snrMSE_MMSE + mean(abs(hPerfect(:) - hMMSE(:)).^2);
+        snrEstimateMSE_MMSE = snrEstimateMSE_MMSE + mean(abs(hPerfect(:) - hMMSE(:)).^2);
 
         % LMMSE信道估计
         CEC.algorithm = 'ls';
-        hLMMSE = channelEstimate(rxPilotSymbols, pilotSignal, dataIndices, pilotIndices, CEC);
+        hLMMSE = channelEstimate(rxPilotSignal, pilotSignal, dataIndices, pilotIndices, CEC);
         msePerfectLMMSE(idx) = mean(abs(hPerfect(:) - hLMMSE(:)).^2);
-        snrMSE_LMMSE = snrMSE_LMMSE + mean(abs(hPerfect(:) - hLMMSE(:)).^2);
+        snrEstimateMSE_LMMSE = snrEstimateMSE_LMMSE + mean(abs(hPerfect(:) - hLMMSE(:)).^2);
 
         %% 信道均衡
 
         % 完美信道 ZF均衡
         hReshaped = reshape(hPerfect,[],numTx,numRx);
-        eqSignalPerfectZF = ofdmEqualize(rxDataSymbols,hReshaped, noiseVar, Algorithm="zf");
+        eqSignalPerfectZF = ofdmEqualize(rxDataSignal,hReshaped, noiseVar, Algorithm="zf");
         eqSignalPerfectZF = reshape(eqSignalPerfectZF, [], 1);
 
         % 完美信道 MMSE均衡
         hReshaped = reshape(hPerfect,[],numTx,numRx);
-        eqSignalPerfectMMSE = ofdmEqualize(rxDataSymbols,hReshaped, noiseVar, Algorithm="mmse");
+        eqSignalPerfectMMSE = ofdmEqualize(rxDataSignal,hReshaped, noiseVar, Algorithm="mmse");
         eqSignalPerfectMMSE = reshape(eqSignalPerfectMMSE, [], 1);  
         
         % LS信道 ZF均衡
         hReshaped = reshape(hLS,[],numTx,numRx);
-        eqSignalLSZF = ofdmEqualize(rxDataSymbols,hReshaped, noiseVar, Algorithm="zf");
+        eqSignalLSZF = ofdmEqualize(rxDataSignal,hReshaped, noiseVar, Algorithm="zf");
         eqSignalLSZF = reshape(eqSignalLSZF, [], 1);  
         % LS信道 MMSE均衡
         hReshaped = reshape(hLS,[],numTx,numRx);
-        eqSignalLSMMSE = ofdmEqualize(rxDataSymbols,hReshaped, noiseVar, Algorithm="mmse");
+        eqSignalLSMMSE = ofdmEqualize(rxDataSignal,hReshaped, noiseVar, Algorithm="mmse");
         eqSignalLSMMSE = reshape(eqSignalLSMMSE, [], 1);  
         % MMSE信道 ZF均衡
         hReshaped = reshape(hMMSE,[],numTx,numRx);
-        eqSignalMMSEZF = ofdmEqualize(rxDataSymbols,hReshaped, noiseVar, Algorithm="zf");
+        eqSignalMMSEZF = ofdmEqualize(rxDataSignal,hReshaped, noiseVar, Algorithm="zf");
         eqSignalMMSEZF = reshape(eqSignalMMSEZF, [], 1);  
         % MMSE信道 MMSE均衡
         hReshaped = reshape(hMMSE,[],numTx,numRx);
-        eqSignalMMSEMMSE = ofdmEqualize(rxDataSymbols,hReshaped, noiseVar, Algorithm="mmse");
+        eqSignalMMSEMMSE = ofdmEqualize(rxDataSignal,hReshaped, noiseVar, Algorithm="mmse");
         eqSignalMMSEMMSE = reshape(eqSignalMMSEMMSE, [], 1);  
 
         % 误符号率计算
@@ -249,9 +256,9 @@ for idx = 1:length(snrValues)
 
     end
     % 对每种算法在当前 SNR 的所有帧计算平均 MSE
-    msePerfectLS(idx) = snrMSE_LS / numSubFrame;
-    msePerfectMMSE(idx) = snrMSE_MMSE / numSubFrame;
-    msePerfectLMMSE(idx) = snrMSE_LMMSE / numSubFrame;
+    msePerfectLS(idx) = snrEstimateMSE_LS / numSubFrame;
+    msePerfectMMSE(idx) = snrEstimateMSE_MMSE / numSubFrame;
+    msePerfectLMMSE(idx) = snrEstimateMSE_LMMSE / numSubFrame;
 end
 
 % 测试数据集保存
@@ -261,7 +268,8 @@ save('../raw/compareData.mat',...
     'csiData',...
     '-v7.3')
 
-save('CE_SER_METRIC.mat',...
+save('./metric/CE_SER_METRIC.mat',...
+    'txSymStreamData',...
     'errorPerfectZF', ...
     'errorPerfectMMSE', ...
     'errorLSZF', ...
