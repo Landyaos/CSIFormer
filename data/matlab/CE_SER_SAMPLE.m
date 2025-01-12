@@ -31,6 +31,10 @@ CEstimateAlgs = ['ls', 'mmse', 'lmmse'];
 %信道均衡配置
 CEqualizeAlgs = ['zf', 'mmse'];
 
+% 信号导频分布配置
+validSubcIndices = (numGuardBands(1)+1):(numSubc-numGuardBands(2));
+numValidSubc = length(validSubcIndices);
+
 % 导频子载波配置
 pilotIndicesAnt1 = [7; 26; 40; 57]; % 天线 1 导频索引
 pilotIndicesAnt2 = [8; 27; 41; 58]; % 天线 2 导频索引
@@ -107,11 +111,14 @@ msePerfectLS = zeros(length(snrValues), 1);
 msePerfectMMSE = zeros(length(snrValues), 1);
 msePerfectLMMSE = zeros(length(snrValues), 1);
 
+txSignalData = zeros(length(snrValues), numSubFrame, numValidSubc, numSym, numTx, 2);
+rxSignalData = zeros(length(snrValues), numSubFrame, numValidSubc, numSym, numRx, 2);
+csiData = zeros(length(snrValues), numSubFrame, numValidSubc, numSym, numTx, numRx, 2);
 
 for idx = 1:length(snrValues)
     
     snr = snrValues(idx);
-    
+    % 重置工具对象
     reset(mimoChannel)
     
     reset(errorRatePerfectLS);
@@ -133,15 +140,40 @@ for idx = 1:length(snrValues)
         % 导频符号生成
         pilotQPSKSymbols = [1+1i, 1+1i, 1+1i, 1+1i];
         pilotSignal = pilotQPSKSymbols(randi(length(pilotQPSKSymbols), numPilot, numSym, numTx));
+        % 发射信号采集
+        originSignal = zeros(numSubc, numSym, numTx);
+        originSignal(dataIndices, :, :) = dataSignal;
+        for tx = 1:numTx
+            for sym = 1:numSym
+                originSignal(pilotIndices(:,sym,tx),sym,tx) = pilotSignal(:, sym, tx);
+            end
+        end    
         % OFDM调制
         txSignal = ofdmMod(dataSignal, pilotSignal); % 结果为 (80 × 14 × 2)，包含循环前缀的时域信号
         % 信道模型：传输信号&路径增益
         [transmitSignal, pathGains] = mimoChannel(txSignal); % pathGains: [总样本数, N_path, numTx, numRx]
         % 噪声模型：传输信号&噪声功率
-        [rxSignal, noiseVar] = awgn(transmitSignal, snr, "measured");
+        [transmitSignal, noiseVar] = awgn(transmitSignal, snr, "measured");
         % OFDM解调: 接收数据信号&接收导频信号 NPilot-by-NSym-by-NT-by-NR
-        [rxDataSymbols, rxPilotSymbols] = ofdmDemod(rxSignal);
-        
+        [rxDataSymbols, rxPilotSymbols] = ofdmDemod(transmitSignal);
+        % 接收信号采集
+        rxSignal = zeros(numSubc, numSym, numRx);
+        rxSignal(dataIndices, :, :) = rxDataSignal(:,:,:);
+        for rx = 1:numRx
+            for tx = 1:numTx
+                for sym = 1:numSym
+                rxSignal(pilotIndices(:,sym,tx),sym,rx) = rxPilotSignal(:,sym,tx,rx);
+                end
+            end
+        end 
+        % 测试数据集采集
+        txSignalData(idx, frame,:,:,:,1) = real(originSignal(validSubcIndices,:,:));
+        txSignalData(idx, frame,:,:,:,2) = imag(originSignal(validSubcIndices,:,:));
+        rxSignalData(idx, frame,:,:,:,2) = imag(rxSignal(validSubcIndices,:,:));
+        rxSignalData(idx, frame,:,:,:,2) = imag(rxSignal(validSubcIndices,:,:));
+        csiData(idx, frame, :,:,:,:,1) = real(h);
+        csiData(idx, frame, :,:,:,:,2) = imag(h);
+
         %% 信道估计
 
         % 完美CSI
@@ -222,45 +254,24 @@ for idx = 1:length(snrValues)
     msePerfectLMMSE(idx) = snrMSE_LMMSE / numSubFrame;
 end
 
-%% 图形1：SER误码率图像
-figure(1);
-hold on;
+% 测试数据集保存
+save('../raw/compareData.mat',...
+    'rxSignalData',...
+    'txSignalData',...
+    'csiData',...
+    '-v7.3')
 
-% 绘制每种算法的误符号率曲线
-plot(snrValues, errorPerfectZF(:, 1), '-o', 'LineWidth', 1.5, 'DisplayName', 'Perfect ZF');
-plot(snrValues, errorPerfectMMSE(:, 1), '-s', 'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
-plot(snrValues, errorLSZF(:, 1), '-d', 'LineWidth', 1.5, 'DisplayName', 'LS ZF');
-plot(snrValues, errorLSMMSE(:, 1), '-^', 'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
-plot(snrValues, errorMMSEZF(:, 1), '-v', 'LineWidth', 1.5, 'DisplayName', 'MMSE ZF');
-plot(snrValues, errorMMSEMMSE(:, 1), '-p', 'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
-
-% 设置图形属性
-grid on;
-xlabel('SNR (dB)');
-ylabel('Symbol Error Rate (SER)');
-title('SER vs. SNR for Different Channel Estimation and Equalization Algorithms');
-legend('Location', 'best');
-set(gca, 'YScale', 'log');  % 将 Y 轴设置为对数坐标
-
-% 显示图形
-hold off;
-
-%% 图形1：信道估计 MSE LOSS图像
-figure(2);
-hold on;
-
-% 绘制每种算法的信道估计MSELOSS图像
-plot(snrValues, msePerfectLS, '-o', 'LineWidth', 1.5, 'DisplayName', 'LS');
-plot(snrValues, msePerfectMMSE, '-s', 'LineWidth', 1.5, 'DisplayName', 'MMSE');
-plot(snrValues, msePerfectLMMSE, '-^', 'LineWidth', 1.5, 'DisplayName', 'LMMSE');
-% 设置图形属性
-grid on;
-xlabel('SNR (dB)');
-ylabel('MSE with h_{Perfect}');
-title('Channel Estimation MSE vs. SNR');
-legend('Location', 'best');
-hold off;
-
+save('CE_SER_METRIC.mat',...
+    'errorPerfectZF', ...
+    'errorPerfectMMSE', ...
+    'errorLSZF', ...
+    'errorLSMMSE', ...
+    'errorMMSEZF', ...
+    'errorMMSEMMSE',...
+    'msePerfectLS', ...
+    'msePerfectMMSE', ...
+    'msePerfectLMMSE',...
+    '-v7.3')
 
 %% 自定义函数
 function [H_est, noiseVar] = channelEstimate(rxPilotSignal,refPilotSignal, dataIndices, pilotIndices, CEC)
