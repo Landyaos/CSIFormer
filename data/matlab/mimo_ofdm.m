@@ -103,12 +103,12 @@ h = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, dataIndices, 
 % rxSignal = transmitSignal;
 
 % OFDM 解调
-[rxDataSymbols, rxPilotSymbols] = ofdmDemod(rxSignal);
+[rxDataSignal, rxPilotSignal] = ofdmDemod(rxSignal);
 % 信道估计
-hEst = channelEstimate(rxPilotSymbols, pilotSignal, dataIndices, pilotIndices, CEC);
+hEst = channelEstimate(rxPilotSignal, pilotSignal, dataIndices, pilotIndices, CEC);
 % 信道均衡
-hReshaped = reshape(h,[],numTx,numRx);
-equalizedSymbols = ofdmEqualize(rxDataSymbols,hReshaped, noiseVar, Algorithm="zf");
+hReshaped = reshape(hEst,[],numTx,numRx);
+equalizedSymbols = ofdmEqualize(rxDataSignal,hReshaped, noiseVar, Algorithm="zf");
 % 将接收到的数据符号转换为列向量
 equalizedSymbols = reshape(equalizedSymbols, [], 1);  
 % 解调接收数据符号
@@ -120,7 +120,7 @@ BER = errorRate(txSymStream, rxSymStream);
 fprintf('\nSymbol error rate = %d from %d errors in %d symbols\n',BER);
 
 %% 自定义函数
-function [H_est, noiseVar] = channelEstimate(rxPilotSignal,refPilotSignal, dataIndices, pilotIndices, CEC)
+function [H_est] = channelEstimate(rxPilotSignal,refPilotSignal, dataIndices, pilotIndices, CEC)
     % MIMO-OFDM 信道估计函数
     % 输入：
     %   rxDataSignal: 接收信号矩阵 (numDataSubc x numSym x numRx)
@@ -143,62 +143,23 @@ function [H_est, noiseVar] = channelEstimate(rxPilotSignal,refPilotSignal, dataI
 
     % 初始化估计的信道响应矩阵和噪声功率
     H_est = zeros(numDataSubc, numSym, numTx, numRx);
-    noiseVar = zeros(numTx, numRx);
-
-    % 验证算法参数
-    validAlgorithms = {'LS', 'MMSE'};
-    if ~any(strcmpi(CEC.algorithm, validAlgorithms))
-        error('Invalid algorithm. Must be one of: LS, MMSE');
-    end
-
-    % 验证插值类型
-    validInterpTypes = {'nearest', 'linear', 'cubic','spline'};
-    if ~any(strcmpi(CEC.interpType, validInterpTypes))
-        error('Invalid interpolation type. Must be one of: nearest, linear, cubic, spline');
-    end
 
     for tx = 1:numTx
         for rx = 1:numRx
             % 获取当前发射 - 接收天线对的导频信号
             pilotRxSignal = rxPilotSignal(:,:,tx,rx);
             pilotRefSignal = refPilotSignal(:, :, tx);
-
-            % 根据算法进行信道估计
-            if strcmpi(CEC.algorithm, 'LS')
-                % 最小二乘估计
-                H_ls = pilotRxSignal./ pilotRefSignal;
-            elseif strcmpi(CEC.algorithm, 'MMSE')
-                error('not today');
-                % % 简单假设信道自相关矩阵为单位矩阵
-                % R_hh = eye(size(pilotRefSignal, 1) * size(pilotRefSignal, 2));
-                % % 噪声功率谱密度暂时假设为1，实际需要估计
-                % noisePower = 1;
-                % R_nn = noisePower * eye(size(pilotRefSignal, 1) * size(pilotRefSignal, 2));
-                % R_yh = R_hh;
-                % mmseDenominator = R_yh' * inv(R_yh * R_yh' + R_nn) * R_yh;
-                % H_ls = mmseDenominator \ (pilotRxSignal(:));
-                % H_ls = reshape(H_ls, size(pilotRxSignal));
-            end
+            H_ls = pilotRxSignal./ pilotRefSignal; % []
+            % % 导频平均
+            % H_avg = pilotAveraging(H_ls, CEC.freqWindow, CEC.timeWindow);
+            % % 信道插值
+            % [X, Y] = meshgrid(1:numSym, dataIndices);
+            % [Xp, Yp] = meshgrid(1:numSym,squeeze(pilotIndices(:,1,tx)));
+            % H_est(:, :, tx, rx)  = griddata(Xp, Yp, H_avg, X, Y);
             
-            % 导频平均
-            H_avg = pilotAveraging(H_ls, CEC.freqWindow, CEC.timeWindow);
-
-            % 信道插值
-            [X, Y] = meshgrid(1:numSym, dataIndices);
-            [Xp, Yp] = meshgrid(1:numSym, squeeze(pilotIndices(:,1)));
-            H_est(:, :, tx, rx)  = griddata(Xp, Yp, H_avg, X, Y);
-
-            % % 噪声估计
-            % dataRxSignal = rxSignal(dataIndices(:, :, tx), :, rx);
-            % dataRefSignal = refPilotSignal(:, :, tx);
-            % estimatedSignal = dataRefSignal.* H_est(dataIndices(:, :, tx), tx, rx);
-            % noise = dataRxSignal - estimatedSignal;
-            % noiseVar(tx, rx) = mean(abs(noise(:)).^2);
+            
         end
     end
-
-    % 计算平均噪声功率
-    noiseVar = mean(noiseVar(:));
 end
 
 function H_avg = pilotAveraging(H_ls, freqWindow, timeWindow)

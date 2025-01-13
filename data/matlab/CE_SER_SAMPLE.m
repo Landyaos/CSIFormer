@@ -1,6 +1,28 @@
+clear;
+clc;
+%%
+miPyPath = 'C:\Users\stone\AppData\Local\Programs\Python\Python312\python.exe';
+lenPyPath = 'D:\Python\python.exe';
+pyenv('Version', lenPyPath)
+model = py.infer.load_model();
+
+function [equalizdSignal] = equalizerInfer(model, tx_pilot, rx_pilot, pre_csi, rx_signal)
+    tx_pilot = py.numpy.array(cat(ndims(tx_pilot)+1, real(tx_pilot), imag(tx_pilot)));
+    rx_pilot = py.numpy.array(cat(ndims(rx_pilot)+1, real(rx_pilot), imag(rx_pilot)));
+    pre_csi = py.numpy.array(cat(ndims(pre_csi)+1, real(pre_csi), imag(pre_csi)));
+    rx_signal = py.numpy.array(cat(ndims(rx_signal)+1, real(rx_signal), imag(rx_signal)));
+    
+    equalizdData = py.infer.infer3(model, tx_pilot, rx_pilot, pre_csi, rx_signal);
+    % 转换 Python numpy 输出为 MATLAB 矩阵
+    equalizdSignal = double(py.array.array('d', py.numpy.nditer(equalizdData)));
+    equalizdSignal = reshape(equalizdSignal, 52,14,2,2);
+    equalizdSignal = complex(equalizdSignal(:,:,:,1), equalizdSignal(:,:,:,2));
+end
+
+
 %% 参数设置
 % 系统参数配置
-numSubFrame = 10;                                         % 子帧数量
+numSubFrame = 100;                                         % 子帧数量
 snrValues = 0:5:30;                                       % 信噪比范围
 numSubc = 64;                                             % FFT 长度
 numGuardBands = [6;6];                                    % 左右保护带
@@ -42,6 +64,7 @@ pilotIndicesAnt2 = [8; 27; 41; 58]; % 天线 2 导频索引
 pilotIndices = zeros(numPilot, numSym, numTx);
 pilotIndices(:, :, 1) = repmat(pilotIndicesAnt1, 1, numSym); % 天线 1
 pilotIndices(:, :, 2) = repmat(pilotIndicesAnt2, 1, numSym); % 天线 2
+pilotIndiceMask = unique([pilotIndicesAnt1,pilotIndicesAnt2]);
 
 % 数据子载波配置
 dataIndices = setdiff((numGuardBands(1)+1):(numSubc-numGuardBands(2)),unique(pilotIndices));
@@ -100,6 +123,8 @@ errorRateLSMMSE = comm.ErrorRate;
 errorRateMMSEZF = comm.ErrorRate;
 errorRateMMSEMMSE = comm.ErrorRate;
 
+
+err = comm.ErrorRate;
 % SER 数据对比
 errorPerfectZF = zeros(length(snrValues), 3);
 errorPerfectMMSE = zeros(length(snrValues), 3);
@@ -113,10 +138,14 @@ msePerfectLS = zeros(length(snrValues), 1);
 msePerfectMMSE = zeros(length(snrValues), 1);
 msePerfectLMMSE = zeros(length(snrValues), 1);
 
+noiseVarlData = zeros(length(snrValues));
+
 txSignalData = zeros(length(snrValues), numSubFrame, numValidSubc, numSym, numTx, 2);
 rxSignalData = zeros(length(snrValues), numSubFrame, numValidSubc, numSym, numRx, 2);
 csiData = zeros(length(snrValues), numSubFrame, numValidSubc, numSym, numTx, numRx, 2);
 txSymStreamData = zeros(length(snrValues), numSubFrame, numSubFrameSym,1);
+
+pre_csi = zeros(2, numValidSubc, numSym, numTx, numRx);
 
 for idx = 1:length(snrValues)
     
@@ -152,6 +181,18 @@ for idx = 1:length(snrValues)
                 originSignal(pilotIndices(:,sym,tx),sym,tx) = pilotSignal(:, sym, tx);
             end
         end    
+                % 发射信号采集
+        arg3 = zeros(numSubc, numSym, numTx);
+        arg3(dataIndices, :, :) = dataSignal;
+        arg = arg3(validSubcIndices,:,:);
+        % 发射信号采集
+        ttxSignal = zeros(numSubc, numSym, numTx);
+        for tx = 1:numTx
+            for sym = 1:numSym
+                arg4(pilotIndices(:,sym,tx),sym,tx) = pilotSignal(:, sym, tx);
+            end
+        end  
+        ttxPilot = arg4(validSubcIndices,:,:);
         % OFDM调制
         txSignal = ofdmMod(dataSignal, pilotSignal); % 结果为 (80 × 14 × 2)，包含循环前缀的时域信号
         % 信道模型：传输信号&路径增益
@@ -160,6 +201,22 @@ for idx = 1:length(snrValues)
         [transmitSignal, noiseVar] = awgn(transmitSignal, snr, "measured");
         % OFDM解调: 接收数据信号&接收导频信号 NPilot-by-NSym-by-NT-by-NR
         [rxDataSignal, rxPilotSignal] = ofdmDemod(transmitSignal);
+
+        % 完美CSI
+        mimoChannelInfo = info(mimoChannel);
+        pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
+        toffset = mimoChannelInfo.ChannelFilterDelay;
+        h = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, validSubcIndices, toffset); % Nsc x Nsym x Nt x Nr
+        hPerfect = h(dataIndiceMask,:,:,:);
+        
+        pre_csi(1,:,:,:,:) = pre_csi(2,:,:,:,:);
+        pre_csi(2,:,:,:,:) = h;
+
+        if frame < 3
+            disp(frame)
+            continue;
+        end
+
         % 接收信号采集
         rxSignal = zeros(numSubc, numSym, numRx);
         rxSignal(dataIndices,:,:) = rxDataSignal(:,:,:);
@@ -170,24 +227,41 @@ for idx = 1:length(snrValues)
                 end
             end
         end 
+        
+        arg1 = zeros(numSubc, numSym, numRx);
+        arg1(dataIndices,:,:) = rxDataSignal(:,:,:);
+        rrxSignal = arg1(validSubcIndices,:,:);
 
-        % 完美CSI
-        mimoChannelInfo = info(mimoChannel);
-        pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
-        toffset = mimoChannelInfo.ChannelFilterDelay;
-        h = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, validSubcIndices, toffset); % Nsc x Nsym x Nt x Nr
-        hPerfect = h(dataIndiceMask,:,:,:);
+        arg2 = zeros(numSubc, numSym, numRx);
+        for rx = 1:numRx
+            for tx = 1:numTx
+                for sym = 1:numSym
+                arg2(pilotIndices(:,sym,tx),sym,rx) = rxPilotSignal(:,sym,tx,rx);
+                end
+            end
+        end 
+        rrxPilot = arg2(validSubcIndices,:,:);
 
+        equalizedData = equalizerInfer(model,ttxPilot, rrxPilot, pre_csi, rrxSignal);
+        equalizedData = equalizedData(dataIndiceMask,:,:);
+        eqSignalll = reshape(equalizedData, [], 1);  
+        % 误符号率计算
+        rxSymPerfectLS = pskdemod(eqSignalll, M);
+        err = comm.ErrorRate;
+        disp(size(txSymStream))
+        disp(size(rxSymPerfectLS))
+        disp(err(txSymStream, rxSymPerfectLS))
+        stemp
         % 测试数据集采集
+        noiseVarlData(idx, frame) = noiseVar;
         txSignalData(idx, frame,:,:,:,1) = real(originSignal(validSubcIndices,:,:));
         txSignalData(idx, frame,:,:,:,2) = imag(originSignal(validSubcIndices,:,:));
-        rxSignalData(idx, frame,:,:,:,2) = imag(rxSignal(validSubcIndices,:,:));
+        rxSignalData(idx, frame,:,:,:,1) = real(rxSignal(validSubcIndices,:,:));
         rxSignalData(idx, frame,:,:,:,2) = imag(rxSignal(validSubcIndices,:,:));
         csiData(idx, frame, :,:,:,:,1) = real(h);
         csiData(idx, frame, :,:,:,:,2) = imag(h);
 
         %% 信道估计
-
         
         % LS信道估计
         CEC.algorithm = 'ls';
@@ -269,6 +343,7 @@ save('../raw/compareData.mat',...
     '-v7.3')
 
 save('./metric/CE_SER_METRIC.mat',...
+    'noiseVarlData',...
     'txSymStreamData',...
     'errorPerfectZF', ...
     'errorPerfectMMSE', ...
@@ -347,7 +422,7 @@ function [H_est, noiseVar] = channelEstimate(rxPilotSignal,refPilotSignal, dataI
 
             % 信道插值
             [X, Y] = meshgrid(1:numSym, dataIndices);
-            [Xp, Yp] = meshgrid(1:numSym, squeeze(pilotIndices(:,1)));
+            [Xp, Yp] = meshgrid(1:numSym, squeeze(pilotIndices(:,1,tx)));
             H_est(:, :, tx, rx)  = griddata(Xp, Yp, H_avg, X, Y);
 
             % % 噪声估计

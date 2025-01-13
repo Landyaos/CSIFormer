@@ -1,5 +1,5 @@
 .ipynb_checkpoints
-data/raw
-checkpoints
-data/matlab/metric
-models/
+data/raw/*
+checkpoints/*
+data/matlab/metric/*
+models/*

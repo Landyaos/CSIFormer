@@ -1,3 +1,5 @@
+clear;
+clc;
 %% 参数设置
 % 系统参数配置
 numSubFrame = 10;                                         % 子帧数量
@@ -50,24 +52,19 @@ numSubFrameSym = numDataSubc * numSym * numTx;
 
 
 %% 模型推理结果解析
-load('estimateAIResults.mat',...
-    'csiAIEstimateData'
-    )
-load('estimateAIPROResults.mat',...
-    'csiAIPROEstimateData'
-    )
-load('equalizeAIResults.mat',...
-    'equalizeAIMAXData',...
-    '')
+load('../raw/inferResults.mat',...
+    'csiAIEstimateData',...
+    'csiAIPROEstimateData',...
+    'equalizeAIMAXData')
 
 
 load('../raw/compareData.mat',...
     'rxSignalData',...
     'txSignalData',...
-    'csiData',...
-    '-v7.3')
+    'csiData')
 
 load('./metric/CE_SER_METRIC.mat',...
+    'noiseVarlData',...
     'txSymStreamData',...
     'errorPerfectZF', ...
     'errorPerfectMMSE', ...
@@ -95,25 +92,31 @@ dataIndiceMask = dataIndices - numGuardBands(1);
 for idx = 1:length(snrValues)
     snr = snrValues(idx);
 
+    reset(errorRateAIMMSE)
+    reset(errorRateAIPROMMSE)
+    reset(errorRateAIPROMAX)
+
     snrEstimateAI_MMSE = 0;
     snrEstimateAIPRO_MMSE = 0;
 
     for frame = 1:numSubFrame
         
-        txSymStream = txSymStreamData(idx,frame);
+        noiseVar = noiseVarlData(idx, frame);
 
-        rxSignal = complex(rxSignalData(idx,frame,:,:,:,1),rxSignalData(idx,frame,:,:,:,2));
+        txSymStream = txSymStreamData(idx,frame);
+        
+        rxSignal = squeeze(complex(rxSignalData(idx,frame,:,:,:,1),rxSignalData(idx,frame,:,:,:,2)));
         rxDataSignal = rxSignal(dataIndiceMask,:,:);
 
-        hPerfect = complex(csiData(idx,frame,:,:,:,:,1),csiData(idx,frame,:,:,:,:,2));
+        hPerfect = squeeze(complex(csiData(idx,frame,:,:,:,:,1),csiData(idx,frame,:,:,:,:,2)));
         hPerfect = hPerfect(dataIndiceMask, :,:,:);
         %
-        csiAIEstimate = complex(csiAIEstimateData(idx,frame,:,:,:,:,1), csiAIEstimateData(idx,frame,:,:,:,:,2));
+        csiAIEstimate = squeeze(complex(csiAIEstimateData(idx,frame,:,:,:,:,1), csiAIEstimateData(idx,frame,:,:,:,:,2)));
         csiAIEstimate = csiAIEstimate(dataIndiceMask,:,:,:);
         snrEstimateAI_MMSE = snrEstimateAI_MMSE + mean(abs(hPerfect(:) - csiAIEstimate(:)).^2);
 
         %
-        csiAIPROEstimate = complex(csiAIPROEstimateData(idx,frame,:,:,:,:,1), csiAIPROEstimateData(idx,frame,:,:,:,:,2));
+        csiAIPROEstimate = squeeze(complex(csiAIPROEstimateData(idx,frame,:,:,:,:,1), csiAIPROEstimateData(idx,frame,:,:,:,:,2)));
         csiAIPROEstimate = csiAIPROEstimate(dataIndiceMask,:,:,:);
         snrEstimateAIPRO_MMSE = snrEstimateAIPRO_MMSE + mean(abs(hPerfect(:) - csiAIPROEstimate(:)).^2);
         
@@ -128,7 +131,7 @@ for idx = 1:length(snrValues)
         eqSignalAIPROMMSE = reshape(eqSignalAIPROMMSE, [], 1);
         
         % AI 均衡
-        eqSignalAIMAX = complex(equalizeAIMAXData(idx,frame,:,:,:,1),equalizeAIMAXData(idx,frame,:,:,:,2));
+        eqSignalAIMAX = squeeze(complex(equalizeAIMAXData(idx,frame,:,:,:,1),equalizeAIMAXData(idx,frame,:,:,:,2)));
         eqSignalAIMAX = reshape(eqSignalAIMAX, [], 1);        
 
         % 误符号率计算
@@ -147,20 +150,23 @@ for idx = 1:length(snrValues)
     mseAIPRO(idx) = snrEstimateAIPRO_MMSE / numSubFrame;
 
 end
-%% 图形1：SER误码率图像
-figure(1);
-hold on;
 
+
+
+%% 图形1：SER误码率图像
+
+figure;
+hold on;
 % 绘制每种算法的误符号率曲线
 plot(snrValues, errorPerfectZF(:, 1), '-o', 'LineWidth', 1.5, 'DisplayName', 'Perfect ZF');
-plot(snrValues, errorPerfectMMSE(:, 1), '-s', 'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
+% plot(snrValues, errorPerfectMMSE(:, 1), '-s', 'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
 plot(snrValues, errorLSZF(:, 1), '-d', 'LineWidth', 1.5, 'DisplayName', 'LS ZF');
-plot(snrValues, errorLSMMSE(:, 1), '-^', 'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
-plot(snrValues, errorMMSEZF(:, 1), '-v', 'LineWidth', 1.5, 'DisplayName', 'MMSE ZF');
-plot(snrValues, errorMMSEMMSE(:, 1), '-p', 'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
-plot(snrValues, errorAIMMSE(:, 1), '-p', 'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
-plot(snrValues, errorAIPROMMSE(:, 1), '-p', 'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
-plot(snrValues, errorAIPROMAX(:, 1), '-p', 'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
+% plot(snrValues, errorLSMMSE(:, 1), '-^', 'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
+% plot(snrValues, errorMMSEZF(:, 1), '-v', 'LineWidth', 1.5, 'DisplayName', 'MMSE ZF');
+% plot(snrValues, errorMMSEMMSE(:, 1), '-p', 'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
+% plot(snrValues, errorAIMMSE(:, 1), '-p', 'LineWidth', 1.5, 'DisplayName', 'AIMMSE');
+plot(snrValues, errorAIPROMMSE(:, 1), '-p', 'LineWidth', 1.5, 'DisplayName', 'AIPROMMSE');
+plot(snrValues, errorAIPROMAX(:, 1), '-p', 'LineWidth', 1.5, 'DisplayName', 'AIPROMAX');
 % 设置图形属性
 grid on;
 xlabel('SNR (dB)');
@@ -172,14 +178,18 @@ set(gca, 'YScale', 'log');  % 将 Y 轴设置为对数坐标
 % 显示图形
 hold off;
 
-%% 图形1：信道估计 MSE LOSS图像
-figure(2);
+% %% 图形1：信道估计 MSE LOSS图像
+figure;
 hold on;
 
 % 绘制每种算法的信道估计MSELOSS图像
 plot(snrValues, msePerfectLS, '-o', 'LineWidth', 1.5, 'DisplayName', 'LS');
-plot(snrValues, msePerfectMMSE, '-s', 'LineWidth', 1.5, 'DisplayName', 'MMSE');
-plot(snrValues, msePerfectLMMSE, '-^', 'LineWidth', 1.5, 'DisplayName', 'LMMSE');
+% plot(snrValues, msePerfectMMSE, '-s', 'LineWidth', 1.5, 'DisplayName', 'MMSE');
+% plot(snrValues, msePerfectLMMSE, '-^', 'LineWidth', 1.5, 'DisplayName', 'LMMSE');
+plot(snrValues, mseAI, '-o', 'LineWidth', 1.5, 'DisplayName', 'mseAI');
+plot(snrValues, mseAIPRO, '-o', 'LineWidth', 1.5, 'DisplayName', 'mseAIPRO');
+
+
 % 设置图形属性
 grid on;
 xlabel('SNR (dB)');
