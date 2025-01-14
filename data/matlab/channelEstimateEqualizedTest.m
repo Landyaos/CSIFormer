@@ -34,7 +34,7 @@ end
 %% 参数设置
 % 系统参数配置
 numSubFrame = 10;                                         % 子帧数量
-snrValues = 0:6:24;                                       % 信噪比范围
+snrValues = 20:5:30;                                       % 信噪比范围
 numSubc = 64;                                             % FFT 长度
 numGuardBands = [6;6];                                    % 左右保护带
 numPilot = 4;                                             % 每根天线的导频子载波
@@ -52,7 +52,7 @@ M = 2;                                                    % QPSK 调制（M=4）
 sampleRate = 15.36e6;                                     % 采样率
 pathDelays = [0 0.5e-6];                                  % 路径时延
 averagePathGains = [0 -2];                                % 平均路径增益
-maxDopplerShift = 200;                                    % 最大多普勒频移
+maxDopplerShift = 1;                                    % 最大多普勒频移
 
 % 信道估计配置
 CEC.pilotAverage = 'UserDefined';
@@ -134,9 +134,8 @@ errorRateLSZF = comm.ErrorRate;
 errorRateLSMMSE = comm.ErrorRate;
 errorRateMMSEZF = comm.ErrorRate;
 errorRateMMSEMMSE = comm.ErrorRate;
+errorRateAI = comm.ErrorRate;
 
-
-err = comm.ErrorRate;
 % SER 数据对比
 errorPerfectZF = zeros(length(snrValues), 3);
 errorPerfectMMSE = zeros(length(snrValues), 3);
@@ -150,15 +149,8 @@ msePerfectLS = zeros(length(snrValues), 1);
 msePerfectMMSE = zeros(length(snrValues), 1);
 msePerfectLMMSE = zeros(length(snrValues), 1);
 
-noiseVarlData = zeros(length(snrValues));
 
-txSignalData = zeros(length(snrValues), numSubFrame, numValidSubc, numSym, numTx, 2);
-rxSignalData = zeros(length(snrValues), numSubFrame, numValidSubc, numSym, numRx, 2);
-csiData = zeros(length(snrValues), numSubFrame, numValidSubc, numSym, numTx, numRx, 2);
-txSymStreamData = zeros(length(snrValues), numSubFrame, numSubFrameSym,1);
-
-pre_csi = zeros(2, numValidSubc, numSym, numTx, numRx);
-
+csiPreTemp = zeros(3, numValidSubc, numSym, numTx, numRx);
 for idx = 1:length(snrValues)
     
     snr = snrValues(idx);
@@ -176,10 +168,9 @@ for idx = 1:length(snrValues)
     snrEstimateMSE_LS = 0;   % 用于累计LS的MSE
     snrEstimateMSE_LMMSE = 0; % 用于累计LMMSE的MSE
     
-    for frame = 1:numSubFrame
+    for frame = -1:numSubFrame
         % 数据符号生成&调制
         txSymStream = randi([0 M-1], numSubFrameSym, 1); 
-        txSymStreamData(idx, frame,:,:) = txSymStream;
         dataSignal = pskmod(txSymStream, M);  
         dataSignal = reshape(dataSignal, numDataSubc, numSym, numTx);
         % 导频符号生成
@@ -193,18 +184,7 @@ for idx = 1:length(snrValues)
                 originSignal(pilotIndices(:,sym,tx),sym,tx) = pilotSignal(:, sym, tx);
             end
         end    
-                % 发射信号采集
-        arg3 = zeros(numSubc, numSym, numTx);
-        arg3(dataIndices, :, :) = dataSignal;
-        arg = arg3(validSubcIndices,:,:);
-        % 发射信号采集
-        ttxSignal = zeros(numSubc, numSym, numTx);
-        for tx = 1:numTx
-            for sym = 1:numSym
-                arg4(pilotIndices(:,sym,tx),sym,tx) = pilotSignal(:, sym, tx);
-            end
-        end  
-        ttxPilot = arg4(validSubcIndices,:,:);
+
         % OFDM调制
         txSignal = ofdmMod(dataSignal, pilotSignal); % 结果为 (80 × 14 × 2)，包含循环前缀的时域信号
         % 信道模型：传输信号&路径增益
@@ -221,11 +201,11 @@ for idx = 1:length(snrValues)
         h = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, validSubcIndices, toffset); % Nsc x Nsym x Nt x Nr
         hPerfect = h(dataIndiceMask,:,:,:);
         
-        pre_csi(1,:,:,:,:) = pre_csi(2,:,:,:,:);
-        pre_csi(2,:,:,:,:) = h;
+        csiPreTemp(1,:,:,:,:) = csiPreTemp(2,:,:,:,:);
+        csiPreTemp(2,:,:,:,:) = csiPreTemp(3,:,:,:,:);
+        csiPreTemp(3,:,:,:,:) = h;
 
-        if frame < 3
-
+        if frame < 1
             continue;
         end
 
@@ -234,43 +214,30 @@ for idx = 1:length(snrValues)
         rxSignal(dataIndices,:,:) = rxDataSignal(:,:,:);
         for rx = 1:numRx
             for tx = 1:numTx
-                for sym = 1:numSym
-                rxSignal(pilotIndices(:,sym,tx),sym,rx) = rxPilotSignal(:,sym,tx,rx);
-                end
+                rxSignal(pilotIndices(:,1,tx),:,rx) = rxPilotSignal(:,:,tx,rx);
             end
-        end 
+        end
+        % 计算导频处信道估计
+        csi_ls = zeros(numSubc, numSym, numTx, numRx);
+        for tx = 1:numTx
+            for rx = 1:numRx
+                csi_ls(pilotIndices(:,1,tx),:,tx,rx) = rxPilotSignal(:,:,tx,rx) ./ pilotSignal(:, :, tx);
+            end
+        end
+        csi_ls = csi_ls(validSubcIndices,:,:,:);
+        % AI信道估计
+        csi_est = csiInfer(model,csi_ls, csiPreTemp(1:2,:,:,:,:));
+        csi_est = csi_est(dataIndiceMask,:,:,:);
         
-        arg1 = zeros(numSubc, numSym, numRx);
-        arg1(dataIndices,:,:) = rxDataSignal(:,:,:);
-        rrxSignal = arg1(validSubcIndices,:,:);
+        % AI信道估计 ZF均衡
+        hReshaped = reshape(csi_est,[],numTx,numRx);
+        eqSignalAIZF = ofdmEqualize(rxDataSignal,hReshaped, noiseVar, Algorithm="mmse");
+        eqSignalAIZF = reshape(eqSignalAIZF, [], 1);
+        rxSymAI = pskdemod(eqSignalAIZF, M);
+        disp(errorRateAI(txSymStream, rxSymAI));
 
-        arg2 = zeros(numSubc, numSym, numRx);
-        for rx = 1:numRx
-            for tx = 1:numTx
-                for sym = 1:numSym
-                arg2(pilotIndices(:,sym,tx),sym,rx) = rxPilotSignal(:,sym,tx,rx);
-                end
-            end
-        end 
-        rrxPilot = arg2(validSubcIndices,:,:);
-
-        equalizedData = equalizerInfer(model,ttxPilot, rrxPilot, pre_csi, rrxSignal);
-        equalizedData = equalizedData(dataIndiceMask,:,:);
-        eqSignalll = reshape(equalizedData, [], 1);  
-        % 误符号率计算
-        rxSymPerfectLS = pskdemod(eqSignalll, M);
-        err = comm.ErrorRate;
-        disp(err(txSymStream, rxSymPerfectLS))
-
-        % 测试数据集采集
-        noiseVarlData(idx, frame) = noiseVar;
-        txSignalData(idx, frame,:,:,:,1) = real(originSignal(validSubcIndices,:,:));
-        txSignalData(idx, frame,:,:,:,2) = imag(originSignal(validSubcIndices,:,:));
-        rxSignalData(idx, frame,:,:,:,1) = real(rxSignal(validSubcIndices,:,:));
-        rxSignalData(idx, frame,:,:,:,2) = imag(rxSignal(validSubcIndices,:,:));
-        csiData(idx, frame, :,:,:,:,1) = real(h);
-        csiData(idx, frame, :,:,:,:,2) = imag(h);
-
+        disp(mean(abs(hPerfect(:) - csi_est(:)).^2))
+xxx
         %% 信道估计
         
         % LS信道估计

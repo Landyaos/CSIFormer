@@ -336,64 +336,21 @@ class CSIFormerLoss(nn.Module):
 
 def load_model(model_name = 'JointCEEQ'):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    if model_name == 'CSIFormer':
-        model = CSIFormer().to(device)
-        model_criterion = CSIFormerLoss()
-        model.load_state_dict(torch.load(os.path.join('../../checkpoints', model.__class__.__name__ + '_best.pth'), map_location=device)['model_state_dict'])
-
-    elif model_name == 'CSIEncoder':
-        model = CSIEncoder().to(device)
-        model_criterion = nn.MSELoss()
-        model.load_state_dict(torch.load(os.path.join('../../checkpoints', model.__class__.__name__ + '_latest.pth'), map_location=device)['model_state_dict'])
-
-    elif model_name == 'JointCEEQ':
-        model = JointCEEQ().to(device)
-        model_criterion = JointCEEQLoss()
-        model.load_state_dict(torch.load(os.path.join('../../checkpoints', model.__class__.__name__ + '_best.pth'), map_location=device)['model_state_dict'])
-    else:
-        return None
-    print(f"{model_name} : load success.")
+    model = JointCEEQ().to(device)
+    model.load_state_dict(torch.load(os.path.join('../../checkpoints', model.__class__.__name__ + '_best.pth'), map_location=device)['model_state_dict'])
     return model
 
-#    return tx_pilot, rx_pilot, pre_csi, rx_signal, csi_label, tx_signal
 
-def infer2(model, tx_pilot, rx_pilot, pre_csi):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # tx_pilot = torch.unsqueeze(torch.tensor(tx_pilot)) 
-    tx_pilot = torch.unsqueeze(torch.tensor(tx_pilot, dtype=torch.float32).to(device))
-    rx_pilot = torch.unsqueeze(torch.tensor(rx_pilot, dtype=torch.float32).to(device))
-    pre_csi = torch.unsqueeze(torch.tensor(pre_csi, dtype=torch.float32).to(device))
-    model.eval()
-    with torch.no_grad():
-        csi_enc, csi_dec = model(tx_pilot, rx_pilot, pre_csi)
-    return torch.squeeze(csi_dec).numpy()
- 
 def infer3(model, tx_pilot, rx_pilot, pre_csi, rx_signal):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # tx_pilot = torch.unsqueeze(torch.tensor(tx_pilot)) 
     tx_pilot = torch.unsqueeze(torch.tensor(tx_pilot, dtype=torch.float32).to(device),0).contiguous()
     rx_pilot = torch.unsqueeze(torch.tensor(rx_pilot, dtype=torch.float32).to(device),0).contiguous()
     pre_csi = torch.unsqueeze(torch.tensor(pre_csi, dtype=torch.float32).to(device),0).contiguous()
     rx_signal = torch.unsqueeze(torch.tensor(rx_signal, dtype=torch.float32).to(device),0).contiguous()
-
-    print(tx_pilot.shape)
-    print(rx_pilot.shape)
-    print(pre_csi.shape)
-    print(rx_signal.shape)
-    
     model.eval()
     with torch.no_grad():
         csi_enc, csi_dec, equalized_signal = model(tx_pilot, rx_pilot, pre_csi, rx_signal)
     equalized_signal = torch.squeeze(equalized_signal).cpu().numpy()
-    print(equalized_signal.shape)
     return equalized_signal
 
-
-def test(model):
-    print('model type')
-    print(type(model))
-    
 
