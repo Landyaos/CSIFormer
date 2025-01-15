@@ -1,6 +1,6 @@
 %% 参数设置
 % 系统参数配置
-snrValues = 15:5:25;                                       % 信噪比范围
+snrValues = 10:5:25;                                       % 信噪比范围
 numSubc = 64;                                             % FFT 长度
 numGuardBands = [6;6];                                    % 左右保护带
 numPilot = 4;                                             % 每根天线的导频子载波
@@ -26,9 +26,9 @@ CEC.timeWindow = 3;
 CEC.interpType = 'linear';
 CEC.algorithm = 'ls';
 
+% 信号导频分布配置
 validSubcIndices = (numGuardBands(1)+1):(numSubc-numGuardBands(2));
 numValidSubc = length(validSubcIndices);
-
 
 % 导频子载波配置
 pilotIndicesAnt1 = [7; 26; 40; 57]; % 天线 1 导频索引
@@ -73,203 +73,123 @@ mimoChannel = comm.MIMOChannel(...
     'RandomStream', 'mt19937ar with seed', ...
     'Seed', 123, ... % 固定随机种子
     'PathGainsOutputPort', true);   % 开启路径增益输出
+
+% 简单信道
+% mimoChannel = comm.MIMOChannel(...
+%     'SampleRate', sampleRate, ...
+%     'SpatialCorrelationSpecification', 'None',...
+%     'NumTransmitAntennas', numTx, ...
+%     'NumReceiveAntennas', numRx, ...
+%     'FadingDistribution', 'Rayleigh', ...
+%     'RandomStream', 'mt19937ar with seed', ...
+%     'Seed', 123, ... % 固定随机种子
+%     'PathGainsOutputPort', true);   % 开启路径增益输出
+
 % 评价体系
 errorRate = comm.ErrorRate;
 
 %% 数据集采集
-
 numFrame = 2;
+datasetPath = {'../raw/trainDataV3.mat', '../raw/valDataV3.mat'};
+datasetConfig = [20000, 2000];
 
-snrDataSize = 30000;
-dataSize = snrDataSize * length(snrValues);
-txSignalData = zeros(dataSize, numValidSubc, numSym, numTx, 2);
-rxSignalData = zeros(dataSize, numValidSubc, numSym, numRx, 2);
-csiLSData = zeros(dataSize, numValidSubc, numSym, numTx, numRx, 2);
-csiLabelData = zeros(dataSize, numValidSubc, numSym, numTx, numRx, 2);
-csiPreData = zeros(dataSize, numFrame, numValidSubc, numSym, numTx, numRx, 2);
 
-csiPreTemp = zeros(numFrame+1, numValidSubc, numSym, numTx, numRx, 2);
-for snrIdx = 1:length(snrValues)
-    disp("snrIdx")
-    disp(snrIdx)
-    snr = snrValues(snrIdx);
-    for step = -1:snrDataSize
-        % 数据符号生成
-        txSymStream = randi([0 M-1], numSubFrameSym, 1); 
-        dataSignal = pskmod(txSymStream, M);  % 调制后的符号为复数形式
-        dataSignal = reshape(dataSignal, numDataSubc, numSym, numTx);
-        pilotSignal = pilotSymbols(randi(length(pilotSymbols), numPilot, numSym, numTx));
-        originSignal = zeros(numSubc, numSym, numTx);
-        originSignal(dataIndices, :, :) = dataSignal;
-        for tx = 1:numTx
-            originSignal(pilotIndices(:,1,tx),:,tx) = pilotSignal(:, :, tx);
-        end    
-        % OFDM 调制
-        txSignal = ofdmMod(dataSignal, pilotSignal); % 结果为 (80 × 14 × 2)，包含循环前缀的时域信号
-        % 通过信道模型获取接收信号和路径增益[总样本数, N_path, numTransmitAntennas, numReceiveAntennas]
-        [transmitSignal, pathGains] = mimoChannel(txSignal);
-        % 噪声
-        [transmitSignal, noiseVar] = awgn(transmitSignal, snr, "measured");
-        % OFDM 解调
-        [rxDataSignal, rxPilotSignal] = ofdmDemod(transmitSignal);
-
-        % 完美CSI矩阵Nsc x Nsym x Nt x Nr
-        mimoChannelInfo = info(mimoChannel);
-        pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
-        toffset = mimoChannelInfo.ChannelFilterDelay;
-        h = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, validSubcIndices, toffset);
-        
-        csiPreTemp(1,:,:,:,:,:) = csiPreTemp(2,:,:,:,:,:);
-        csiPreTemp(2,:,:,:,:,:) = csiPreTemp(3,:,:,:,:,:);
-        csiPreTemp(3,:,:,:,:,1) = real(h);
-        csiPreTemp(3,:,:,:,:,2) = imag(h);
-        
-        if step < 1
-            continue;
-        end
-        % 接收信号
-        finalSignal = zeros(numSubc, numSym, numRx);
-        finalSignal(dataIndices, :, :) = rxDataSignal(:,:,:);
-        for rx = 1:numRx
-            for tx = 1:numTx
-                finalSignal(pilotIndices(:,1,tx),:,rx) = rxPilotSignal(:,:,tx,rx);
-            end
-        end
-        % 计算导频处信道估计
-        csiLS = zeros(numSubc, numSym, numTx, numRx);
-        for tx = 1:numTx
-            for rx = 1:numRx
-                csiLS(pilotIndices(:,1,tx),:,tx,rx) = rxPilotSignal(:,:,tx,rx) ./ pilotSignal(:, :, tx);
-            end
-        end
-        
+for datasetIdx = 1:length(datasetPath)
+    snrDatasetSize = datasetConfig(datasetIdx);
     
-        %% 数据保存
-        dataIdx = snrDataSize * (snrIdx-1) + step;
-        if dataIdx > dataSize
-            disp(dataIdx)
-        end
-        % csi_pre
-        csiPreData(dataIdx,:,:,:,:,:,:) = csiPreTemp(1:2,:,:,:,:,:);
-        % csi
-        csiLabelData(dataIdx,:,:,:,:,:) = csiPreTemp(3,:,:,:,:,:);
-        % csi_ls
-        csiLSData(dataIdx,:,:,:,:,1) = real(csiLS(validSubcIndices,:,:,:));
-        csiLSData(dataIdx,:,:,:,:,2) = imag(csiLS(validSubcIndices,:,:,:));
-        % 发送信号（实部和虚部分离）
-        txSignalData(dataIdx,:,:,:,1) = real(originSignal(validSubcIndices, :, :));
-        txSignalData(dataIdx,:,:,:,2) = imag(originSignal(validSubcIndices, :, :));
-        % 接收信号（实部和虚部分离）
-        rxSignalData(dataIdx,:,:,:,1) = real(finalSignal(validSubcIndices, :, :));
-        rxSignalData(dataIdx,:,:,:,2) = imag(finalSignal(validSubcIndices, :, :));
-        
-    end
-end    
-disp('save data ...')
-
-% 保存批量数据到文件
-save('../raw/valData.mat', ...
-    'csiLSData',...
-    'csiPreData',...
-    'csiLabelData', ...
-    'txSignalData',...
-    'rxSignalData',...
-    '-v7.3');
-
-% -----------------------------------------------------------------------
-snrDataSize = 3000;
-dataSize = snrDataSize * length(snrValues);
-txSignalData = zeros(dataSize, numValidSubc, numSym, numTx, 2);
-rxSignalData = zeros(dataSize, numValidSubc, numSym, numRx, 2);
-csiLSData = zeros(dataSize, numValidSubc, numSym, numTx, numRx, 2);
-csiLabelData = zeros(dataSize, numValidSubc, numSym, numTx, numRx, 2);
-csiPreData = zeros(dataSize, numFrame, numValidSubc, numSym, numTx, numRx, 2);
-
-csiPreTemp = zeros(numFrame+1, numValidSubc, numSym, numTx, numRx, 2);
-for snrIdx = 1:length(snrValues)
-    disp("snrIdx")
-    disp(snrIdx)
-    snr = snrValues(snrIdx);
-    for step = -1:snrDataSize
-        % 数据符号生成
-        txSymStream = randi([0 M-1], numSubFrameSym, 1); 
-        dataSignal = pskmod(txSymStream, M);  % 调制后的符号为复数形式
-        dataSignal = reshape(dataSignal, numDataSubc, numSym, numTx);
-        pilotSignal = pilotSymbols(randi(length(pilotSymbols), numPilot, numSym, numTx));
-        originSignal = zeros(numSubc, numSym, numTx);
-        originSignal(dataIndices, :, :) = dataSignal;
-        for tx = 1:numTx
-            originSignal(pilotIndices(:,1,tx),:,tx) = pilotSignal(:, :, tx);
-        end    
-        % OFDM 调制
-        txSignal = ofdmMod(dataSignal, pilotSignal); % 结果为 (80 × 14 × 2)，包含循环前缀的时域信号
-        % 通过信道模型获取接收信号和路径增益[总样本数, N_path, numTransmitAntennas, numReceiveAntennas]
-        [transmitSignal, pathGains] = mimoChannel(txSignal);
-        % 噪声
-        [transmitSignal, noiseVar] = awgn(transmitSignal, snr, "measured");
-        % OFDM 解调
-        [rxDataSignal, rxPilotSignal] = ofdmDemod(transmitSignal);
-
-        % 完美CSI矩阵Nsc x Nsym x Nt x Nr
-        mimoChannelInfo = info(mimoChannel);
-        pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
-        toffset = mimoChannelInfo.ChannelFilterDelay;
-        h = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, validSubcIndices, toffset);
-        
-        csiPreTemp(1,:,:,:,:,:) = csiPreTemp(2,:,:,:,:,:);
-        csiPreTemp(2,:,:,:,:,:) = csiPreTemp(3,:,:,:,:,:);
-        csiPreTemp(3,:,:,:,:,1) = real(h);
-        csiPreTemp(3,:,:,:,:,2) = imag(h);
-        
-        if step < 1
-            continue;
-        end
-        % 接收信号
-        finalSignal = zeros(numSubc, numSym, numRx);
-        finalSignal(dataIndices, :, :) = rxDataSignal(:,:,:);
-        for rx = 1:numRx
-            for tx = 1:numTx
-                finalSignal(pilotIndices(:,1,tx),:,rx) = rxPilotSignal(:,:,tx,rx);
-            end
-        end
-        % 计算导频处信道估计
-        csiLS = zeros(numSubc, numSym, numTx, numRx);
-        for tx = 1:numTx
-            for rx = 1:numRx
-                csiLS(pilotIndices(:,1,tx),:,tx,rx) = rxPilotSignal(:,:,tx,rx) ./ pilotSignal(:, :, tx);
-            end
-        end
-        
+    datasetCapacity = snrDatasetSize * length(snrValues);
+    txSignalData = zeros(datasetCapacity, numValidSubc, numSym, numTx, 2);
+    rxSignalData = zeros(datasetCapacity, numValidSubc, numSym, numRx, 2);
+    csiLSData = zeros(datasetCapacity, numValidSubc, numSym, numTx, numRx, 2);
+    csiLabelData = zeros(datasetCapacity, numValidSubc, numSym, numTx, numRx, 2);
+    csiPreData = zeros(datasetCapacity, numFrame, numValidSubc, numSym, numTx, numRx, 2);
     
-        %% 数据保存
-        dataIdx = snrDataSize * (snrIdx-1) + step;
-        if dataIdx > dataSize
-            disp(dataIdx)
-        end
-        % csi_pre
-        csiPreData(dataIdx,:,:,:,:,:,:) = csiPreTemp(1:2,:,:,:,:,:);
-        % csi
-        csiLabelData(dataIdx,:,:,:,:,:) = csiPreTemp(3,:,:,:,:,:);
-        % csi_ls
-        csiLSData(dataIdx,:,:,:,:,1) = real(csiLS(validSubcIndices,:,:,:));
-        csiLSData(dataIdx,:,:,:,:,2) = imag(csiLS(validSubcIndices,:,:,:));
-        % 发送信号（实部和虚部分离）
-        txSignalData(dataIdx,:,:,:,1) = real(originSignal(validSubcIndices, :, :));
-        txSignalData(dataIdx,:,:,:,2) = imag(originSignal(validSubcIndices, :, :));
-        % 接收信号（实部和虚部分离）
-        rxSignalData(dataIdx,:,:,:,1) = real(finalSignal(validSubcIndices, :, :));
-        rxSignalData(dataIdx,:,:,:,2) = imag(finalSignal(validSubcIndices, :, :));
+    csiPreTemp = zeros(numFrame+1, numValidSubc, numSym, numTx, numRx, 2);
+    for snrIdx = 1:length(snrValues)
+        disp("snrIdx")
+        disp(snrIdx)
+        snr = snrValues(snrIdx);
+        for frame = -1:snrDatasetSize
+            % 数据符号生成
+            txSymStream = randi([0 M-1], numSubFrameSym, 1); 
+            dataSignal = pskmod(txSymStream, M);  % 调制后的符号为复数形式
+            dataSignal = reshape(dataSignal, numDataSubc, numSym, numTx);
+            pilotSignal = pilotSymbols(randi(length(pilotSymbols), numPilot, numSym, numTx));
+            
+            originSignal = zeros(numSubc, numSym, numTx);
+            originSignal(dataIndices, :, :) = dataSignal;
+            for tx = 1:numTx
+                originSignal(pilotIndices(:,1,tx),:,tx) = pilotSignal(:, :, tx);
+            end    
+            % OFDM 调制
+            txSignal = ofdmMod(dataSignal, pilotSignal); % 结果为 (80 × 14 × 2)，包含循环前缀的时域信号
+            % 通过信道模型获取接收信号和路径增益[总样本数, N_path, numTransmitAntennas, numReceiveAntennas]
+            [transmitSignal, pathGains] = mimoChannel(txSignal);
+            % 噪声
+            [transmitSignal, noiseVar] = awgn(transmitSignal, snr, "measured");
+            % OFDM 解调
+            [rxDataSignal, rxPilotSignal] = ofdmDemod(transmitSignal);
+    
+            % 完美CSI矩阵Nsc x Nsym x Nt x Nr
+            mimoChannelInfo = info(mimoChannel);
+            pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
+            toffset = mimoChannelInfo.ChannelFilterDelay;
+            h = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, validSubcIndices, toffset);
+            
+            csiPreTemp(1,:,:,:,:,:) = csiPreTemp(2,:,:,:,:,:);
+            csiPreTemp(2,:,:,:,:,:) = csiPreTemp(3,:,:,:,:,:);
+            csiPreTemp(3,:,:,:,:,1) = real(h);
+            csiPreTemp(3,:,:,:,:,2) = imag(h);
+            
+            if frame < 1
+                continue;
+            end
+            % 接收信号
+            finalSignal = zeros(numSubc, numSym, numRx);
+            finalSignal(dataIndices, :, :) = rxDataSignal(:,:,:);
+            for rx = 1:numRx
+                for tx = 1:numTx
+                    finalSignal(pilotIndices(:,1,tx),:,rx) = rxPilotSignal(:,:,tx,rx);
+                end
+            end
+            % 计算导频处信道估计
+            csiLS = zeros(numSubc, numSym, numTx, numRx);
+            for tx = 1:numTx
+                for rx = 1:numRx
+                    csiLS(pilotIndices(:,1,tx),:,tx,rx) = rxPilotSignal(:,:,tx,rx) ./ pilotSignal(:, :, tx);
+                end
+            end
+            
         
-    end
-end    
+            %% 数据保存
+            dataIdx = snrDatasetSize * (snrIdx-1) + frame;
+    
+            % csi_pre
+            csiPreData(dataIdx,:,:,:,:,:,:) = csiPreTemp(1:2,:,:,:,:,:);
+            % csi
+            csiLabelData(dataIdx,:,:,:,:,:) = csiPreTemp(3,:,:,:,:,:);
+            % csi_ls
+            csiLSData(dataIdx,:,:,:,:,1) = real(csiLS(validSubcIndices,:,:,:));
+            csiLSData(dataIdx,:,:,:,:,2) = imag(csiLS(validSubcIndices,:,:,:));
+            % 发送信号（实部和虚部分离）
+            txSignalData(dataIdx,:,:,:,1) = real(originSignal(validSubcIndices, :, :));
+            txSignalData(dataIdx,:,:,:,2) = imag(originSignal(validSubcIndices, :, :));
+            % 接收信号（实部和虚部分离）
+            rxSignalData(dataIdx,:,:,:,1) = real(finalSignal(validSubcIndices, :, :));
+            rxSignalData(dataIdx,:,:,:,2) = imag(finalSignal(validSubcIndices, :, :));
+            
+        end
+    end    
+    disp('save data ...')
+    
+    % 保存批量数据到文件
+    save(datasetPath{datasetIdx}, ...
+        'csiLSData',...
+        'csiPreData',...
+        'csiLabelData', ...
+        'txSignalData',...
+        'rxSignalData',...
+        '-v7.3');
+end
 
-disp('save data ...')
 
-% 保存批量数据到文件
-save('../raw/valData.mat', ...
-    'csiLSData',...
-    'csiPreData',...
-    'csiLabelData', ...
-    'txSignalData',...
-    'rxSignalData',...
-    '-v7.3');

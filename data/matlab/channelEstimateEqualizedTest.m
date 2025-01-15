@@ -6,23 +6,9 @@ lenPyPath = 'D:\Python\python.exe';
 pyenv('Version', lenPyPath)
 model = py.csiFormer.load_model();
 
-function [equalizdSignal] = equalizerInfer(model, tx_pilot, rx_pilot, pre_csi, rx_signal)
-    tx_pilot = py.numpy.array(cat(ndims(tx_pilot)+1, real(tx_pilot), imag(tx_pilot)));
-    rx_pilot = py.numpy.array(cat(ndims(rx_pilot)+1, real(rx_pilot), imag(rx_pilot)));
-    pre_csi = py.numpy.array(cat(ndims(pre_csi)+1, real(pre_csi), imag(pre_csi)));
-    rx_signal = py.numpy.array(cat(ndims(rx_signal)+1, real(rx_signal), imag(rx_signal)));
-    
-    equalizdData = py.infer.infer3(model, tx_pilot, rx_pilot, pre_csi, rx_signal);
-    % 转换 Python numpy 输出为 MATLAB 矩阵
-    equalizdSignal = double(py.array.array('d', py.numpy.nditer(equalizdData)));
-    equalizdSignal = reshape(equalizdSignal, 52,14,2,2);
-    equalizdSignal = complex(equalizdSignal(:,:,:,1), equalizdSignal(:,:,:,2));
-end
-
 function [csi_est] = csiInfer(model, csi_ls, pre_csi)
     csi_ls = py.numpy.array(cat(ndims(csi_ls)+1, real(csi_ls), imag(csi_ls)));
     pre_csi = py.numpy.array(cat(ndims(pre_csi)+1, real(pre_csi), imag(pre_csi)));
-    
     csi_est = py.csiFormer.infer(model, csi_ls, pre_csi);
     % 转换 Python numpy 输出为 MATLAB 矩阵
     csi_est = double(py.array.array('d', py.numpy.nditer(csi_est)));
@@ -33,8 +19,7 @@ end
 
 %% 参数设置
 % 系统参数配置
-numSubFrame = 10;                                         % 子帧数量
-snrValues = 20:5:30;                                       % 信噪比范围
+snrValues = 0:5:25;                                      % 信噪比范围
 numSubc = 64;                                             % FFT 长度
 numGuardBands = [6;6];                                    % 左右保护带
 numPilot = 4;                                             % 每根天线的导频子载波
@@ -52,7 +37,7 @@ M = 2;                                                    % QPSK 调制（M=4）
 sampleRate = 15.36e6;                                     % 采样率
 pathDelays = [0 0.5e-6];                                  % 路径时延
 averagePathGains = [0 -2];                                % 平均路径增益
-maxDopplerShift = 1;                                    % 最大多普勒频移
+maxDopplerShift = 200;                                    % 最大多普勒频移
 
 % 信道估计配置
 CEC.pilotAverage = 'UserDefined';
@@ -60,10 +45,6 @@ CEC.freqWindow = 3;
 CEC.timeWindow = 3;
 CEC.interpType = 'linear';
 CEC.algorithm = 'ls';
-CEstimateAlgs = ['ls', 'mmse', 'lmmse'];
-
-%信道均衡配置
-CEqualizeAlgs = ['zf', 'mmse'];
 
 % 信号导频分布配置
 validSubcIndices = (numGuardBands(1)+1):(numSubc-numGuardBands(2));
@@ -76,7 +57,8 @@ pilotIndicesAnt2 = [8; 27; 41; 58]; % 天线 2 导频索引
 pilotIndices = zeros(numPilot, numSym, numTx);
 pilotIndices(:, :, 1) = repmat(pilotIndicesAnt1, 1, numSym); % 天线 1
 pilotIndices(:, :, 2) = repmat(pilotIndicesAnt2, 1, numSym); % 天线 2
-pilotIndiceMask = unique([pilotIndicesAnt1,pilotIndicesAnt2]);
+% 导频集合
+pilotQPSKSymbols = [1+1i, 1+1i, 1+1i, 1+1i];
 
 % 数据子载波配置
 dataIndices = setdiff((numGuardBands(1)+1):(numSubc-numGuardBands(2)),unique(pilotIndices));
@@ -137,19 +119,22 @@ errorRateMMSEMMSE = comm.ErrorRate;
 errorRateAI = comm.ErrorRate;
 
 % SER 数据对比
-errorPerfectZF = zeros(length(snrValues), 3);
-errorPerfectMMSE = zeros(length(snrValues), 3);
-errorLSZF = zeros(length(snrValues), 3);
-errorLSMMSE = zeros(length(snrValues), 3);
-errorMMSEZF = zeros(length(snrValues), 3);
-errorMMSEMMSE = zeros(length(snrValues), 3);
+serPerfectZF = zeros(length(snrValues), 3);
+serPerfectMMSE = zeros(length(snrValues), 3);
+serLSZF = zeros(length(snrValues), 3);
+serLSMMSE = zeros(length(snrValues), 3);
+serMMSEZF = zeros(length(snrValues), 3);
+serMMSEMMSE = zeros(length(snrValues), 3);
+serAI = zeros(length(snrValues), 3);
 
 % 信道估计MSE LOSS 数据对比
-msePerfectLS = zeros(length(snrValues), 1);
-msePerfectMMSE = zeros(length(snrValues), 1);
-msePerfectLMMSE = zeros(length(snrValues), 1);
+csiLossPerfectLS = zeros(length(snrValues), 1);
+csiLossPerfectMMSE = zeros(length(snrValues), 1);
+csiLossPerfectLMMSE = zeros(length(snrValues), 1);
+csiLossAI = zeros(length(snrValues), 1);
 
-
+% 每个SNR统计子帧的数量
+numCountFrame = 10;                                        
 csiPreTemp = zeros(3, numValidSubc, numSym, numTx, numRx);
 for idx = 1:length(snrValues)
     
@@ -163,29 +148,29 @@ for idx = 1:length(snrValues)
     reset(errorRateLSMMSE);
     reset(errorRateMMSEZF);
     reset(errorRateMMSEMMSE);
+    reset(errorRateAI)
     
-    snrEstimateMSE_MMSE = 0; % 用于累计MMSE的MSE
-    snrEstimateMSE_LS = 0;   % 用于累计LS的MSE
-    snrEstimateMSE_LMMSE = 0; % 用于累计LMMSE的MSE
+    csiEst_LOSS_MMSE = 0;  % 用于累计MMSE   的MSE LOSS
+    csiEst_LOSS_LS = 0;    % 用于累计LS     的MSE LOSS
+    csiEst_LOSS_LMMSE = 0; % 用于累计LMMSE  的MSE LOSS
+    csiEst_LOSS_AI = 0;    % 用于累计AI  的MSE LOSS
     
-    for frame = -1:numSubFrame
+    for frame = -1:numCountFrame
         % 数据符号生成&调制
         txSymStream = randi([0 M-1], numSubFrameSym, 1); 
         dataSignal = pskmod(txSymStream, M);  
         dataSignal = reshape(dataSignal, numDataSubc, numSym, numTx);
-        % 导频符号生成
-        pilotQPSKSymbols = [1+1i, 1+1i, 1+1i, 1+1i];
+
         pilotSignal = pilotQPSKSymbols(randi(length(pilotQPSKSymbols), numPilot, numSym, numTx));
         % 发射信号采集
         originSignal = zeros(numSubc, numSym, numTx);
         originSignal(dataIndices, :, :) = dataSignal;
         for tx = 1:numTx
-            for sym = 1:numSym
-                originSignal(pilotIndices(:,sym,tx),sym,tx) = pilotSignal(:, sym, tx);
-            end
+            originSignal(pilotIndices(:,1,tx),:,tx) = pilotSignal(:, :, tx);
+
         end    
 
-        % OFDM调制
+        % OFDM 调制
         txSignal = ofdmMod(dataSignal, pilotSignal); % 结果为 (80 × 14 × 2)，包含循环前缀的时域信号
         % 信道模型：传输信号&路径增益
         [transmitSignal, pathGains] = mimoChannel(txSignal); % pathGains: [总样本数, N_path, numTx, numRx]
@@ -198,25 +183,27 @@ for idx = 1:length(snrValues)
         mimoChannelInfo = info(mimoChannel);
         pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
         toffset = mimoChannelInfo.ChannelFilterDelay;
-        h = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, validSubcIndices, toffset); % Nsc x Nsym x Nt x Nr
-        hPerfect = h(dataIndiceMask,:,:,:);
+        hValidSubc = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, validSubcIndices, toffset); % Nsc x Nsym x Nt x Nr
+        hPerfect = hValidSubc(dataIndiceMask,:,:,:);
         
         csiPreTemp(1,:,:,:,:) = csiPreTemp(2,:,:,:,:);
         csiPreTemp(2,:,:,:,:) = csiPreTemp(3,:,:,:,:);
-        csiPreTemp(3,:,:,:,:) = h;
+        csiPreTemp(3,:,:,:,:) = hValidSubc;
 
         if frame < 1
             continue;
         end
 
         % 接收信号采集
-        rxSignal = zeros(numSubc, numSym, numRx);
-        rxSignal(dataIndices,:,:) = rxDataSignal(:,:,:);
+        finalSignal = zeros(numSubc, numSym, numRx);
+        finalSignal(dataIndices,:,:) = rxDataSignal(:,:,:);
         for rx = 1:numRx
             for tx = 1:numTx
-                rxSignal(pilotIndices(:,1,tx),:,rx) = rxPilotSignal(:,:,tx,rx);
+                finalSignal(pilotIndices(:,1,tx),:,rx) = rxPilotSignal(:,:,tx,rx);
             end
         end
+
+        %% AI信道估计与均衡
         % 计算导频处信道估计
         csi_ls = zeros(numSubc, numSym, numTx, numRx);
         for tx = 1:numTx
@@ -225,38 +212,33 @@ for idx = 1:length(snrValues)
             end
         end
         csi_ls = csi_ls(validSubcIndices,:,:,:);
-        % AI信道估计
-        csi_est = csiInfer(model,csi_ls, csiPreTemp(1:2,:,:,:,:));
-        csi_est = csi_est(dataIndiceMask,:,:,:);
-        
+        csi_ai = csiInfer(model,csi_ls, csiPreTemp(1:2,:,:,:,:));
+        csi_ai = csi_ai(dataIndiceMask,:,:,:);
+        csiEst_LOSS_AI = csiEst_LOSS_AI + mean(abs(hPerfect(:) - csi_ai(:)).^2);
         % AI信道估计 ZF均衡
-        hReshaped = reshape(csi_est,[],numTx,numRx);
+        hReshaped = reshape(csi_ai,[],numTx,numRx);
         eqSignalAIZF = ofdmEqualize(rxDataSignal,hReshaped, noiseVar, Algorithm="mmse");
         eqSignalAIZF = reshape(eqSignalAIZF, [], 1);
         rxSymAI = pskdemod(eqSignalAIZF, M);
-        disp(errorRateAI(txSymStream, rxSymAI));
+        serAI(idx, :) = errorRateAI(txSymStream, rxSymAI);
 
-        disp(mean(abs(hPerfect(:) - csi_est(:)).^2))
-xxx
-        %% 信道估计
+        %% 传统信道估计
         
         % LS信道估计
         CEC.algorithm = 'ls';
         hLS = channelEstimate(rxPilotSignal, pilotSignal, dataIndices, pilotIndices, CEC);
-        snrEstimateMSE_LS = snrEstimateMSE_LS + mean(abs(hPerfect(:) - hLS(:)).^2);
+        csiEst_LOSS_LS = csiEst_LOSS_LS + mean(abs(hPerfect(:) - hLS(:)).^2);
 
         % MMSE信道估计
         CEC.algorithm = 'ls';
         hMMSE = channelEstimate(rxPilotSignal, pilotSignal, dataIndices, pilotIndices, CEC);
-        msePerfectMMSE(idx) = mean(abs(hPerfect(:) - hMMSE(:)).^2);
-        snrEstimateMSE_MMSE = snrEstimateMSE_MMSE + mean(abs(hPerfect(:) - hMMSE(:)).^2);
+        csiEst_LOSS_MMSE = csiEst_LOSS_MMSE + mean(abs(hPerfect(:) - hMMSE(:)).^2);
 
         % LMMSE信道估计
         CEC.algorithm = 'ls';
         hLMMSE = channelEstimate(rxPilotSignal, pilotSignal, dataIndices, pilotIndices, CEC);
-        msePerfectLMMSE(idx) = mean(abs(hPerfect(:) - hLMMSE(:)).^2);
-        snrEstimateMSE_LMMSE = snrEstimateMSE_LMMSE + mean(abs(hPerfect(:) - hLMMSE(:)).^2);
-
+        csiEst_LOSS_LMMSE = csiEst_LOSS_LMMSE + mean(abs(hPerfect(:) - hLMMSE(:)).^2);
+        
         %% 信道均衡
 
         % 完美信道 ZF均衡
@@ -288,28 +270,28 @@ xxx
 
         % 误符号率计算
         rxSymPerfectLS = pskdemod(eqSignalPerfectZF, M);
-        errorPerfectZF(idx, :) = errorRatePerfectLS(txSymStream, rxSymPerfectLS);
+        serPerfectZF(idx, :) = errorRatePerfectLS(txSymStream, rxSymPerfectLS);
     
         rxSymPerfectMMSE = pskdemod(eqSignalPerfectMMSE, M);
-        errorPerfectMMSE(idx, :) = errorRatePerfectMMSE(txSymStream, rxSymPerfectMMSE);
+        serPerfectMMSE(idx, :) = errorRatePerfectMMSE(txSymStream, rxSymPerfectMMSE);
     
         rxSymLSZF = pskdemod(eqSignalLSZF, M);
-        errorLSZF(idx, :) = errorRateLSZF(txSymStream, rxSymLSZF);
+        serLSZF(idx, :) = errorRateLSZF(txSymStream, rxSymLSZF);
     
         rxSymLSMMSE = pskdemod(eqSignalLSMMSE, M);
-        errorLSMMSE(idx, :) = errorRateLSMMSE(txSymStream, rxSymLSMMSE);
+        serLSMMSE(idx, :) = errorRateLSMMSE(txSymStream, rxSymLSMMSE);
     
         rxSymMMSEZF = pskdemod(eqSignalMMSEZF, M);
-        errorMMSEZF(idx, :) = errorRateMMSEZF(txSymStream, rxSymMMSEZF);
+        serMMSEZF(idx, :) = errorRateMMSEZF(txSymStream, rxSymMMSEZF);
     
         rxSymMMSEMMSE = pskdemod(eqSignalMMSEMMSE, M);
-        errorMMSEMMSE(idx, :) = errorRateMMSEMMSE(txSymStream, rxSymMMSEMMSE);
+        serMMSEMMSE(idx, :) = errorRateMMSEMMSE(txSymStream, rxSymMMSEMMSE);
 
     end
     % 对每种算法在当前 SNR 的所有帧计算平均 MSE
-    msePerfectLS(idx) = snrEstimateMSE_LS / numSubFrame;
-    msePerfectMMSE(idx) = snrEstimateMSE_MMSE / numSubFrame;
-    msePerfectLMMSE(idx) = snrEstimateMSE_LMMSE / numSubFrame;
+    csiLossPerfectLS(idx) = csiEst_LOSS_LS / numCountFrame;
+    csiLossPerfectMMSE(idx) = csiEst_LOSS_MMSE / numCountFrame;
+    csiLossPerfectLMMSE(idx) = csiEst_LOSS_LMMSE / numCountFrame;
 end
 
 % % 测试数据集保存
@@ -339,13 +321,13 @@ end
 figure;
 hold on;
 % 绘制每种算法的误符号率曲线
-plot(snrValues, errorPerfectZF(:, 1), '-o', 'LineWidth', 1.5, 'DisplayName', 'Perfect ZF');
+plot(snrValues, serPerfectZF(:, 1), '-o', 'LineWidth', 1.5, 'DisplayName', 'Perfect ZF');
 % plot(snrValues, errorPerfectMMSE(:, 1), '-s', 'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
-plot(snrValues, errorLSZF(:, 1), '-d', 'LineWidth', 1.5, 'DisplayName', 'LS ZF');
+plot(snrValues, serLSZF(:, 1), '-d', 'LineWidth', 1.5, 'DisplayName', 'LS ZF');
 % plot(snrValues, errorLSMMSE(:, 1), '-^', 'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
 % plot(snrValues, errorMMSEZF(:, 1), '-v', 'LineWidth', 1.5, 'DisplayName', 'MMSE ZF');
 % plot(snrValues, errorMMSEMMSE(:, 1), '-p', 'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
-% plot(snrValues, errorAIMMSE(:, 1), '-p', 'LineWidth', 1.5, 'DisplayName', 'AIMMSE');
+plot(snrValues, serAI(:, 1), '-p', 'LineWidth', 1.5, 'DisplayName', 'AI ZF');
 % plot(snrValues, errorAIPROMMSE(:, 1), '-p', 'LineWidth', 1.5, 'DisplayName', 'AIPROMMSE');
 % plot(snrValues, errorAIPROMAX(:, 1), '-p', 'LineWidth', 1.5, 'DisplayName', 'AIPROMAX');
 % 设置图形属性

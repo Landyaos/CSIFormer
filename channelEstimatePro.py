@@ -358,26 +358,6 @@ def train_model(model, dataloader_train, dataloader_val, criterion, optimizer, s
             }, os.path.join(checkpoint_dir, model.__class__.__name__ + '_epoch_'+str(epoch)+'.pth'))
 
 
-class ComplexMSELoss(nn.Module):
-    def __init__(self):
-        """
-        :param alpha: 第一部分损失的权重
-        :param beta:  第二部分损失的权重
-        """
-        super(ComplexMSELoss, self).__init__()
-
-
-    def forward(self, csi_est, csi_label):
-        """
-        复数信道估计的均方误差 (MSE) 损失函数。
-        x_py: (batch_size, csi_matrix, 2)，估计值
-        y_py: (batch_size, csi_matrix, 2)，真实值
-        """
-        diff = csi_est - csi_label  # 差值，形状保持一致
-        loss = torch.mean(diff[..., 0]**2 + diff[..., 1]**2)  # 实部和虚部平方和
-        return loss
-   
-
 print("load data")
 data_train = hdf5storage.loadmat('/root/autodl-tmp/data/raw/trainData.mat')
 data_val = hdf5storage.loadmat('/root/autodl-tmp/data/raw/valData.mat')

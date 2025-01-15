@@ -239,12 +239,32 @@ class CSIFormer(nn.Module):
         # (2) 解码器：结合前 n 帧的 CSI 与 csi_enc，输出增强后的 CSI
         csi_dec = self.decoder(csi_enc, previous_csi)  # [B, n_subc, n_sym, n_tx, n_rx, 2]
         return csi_dec
+    
+class ComplexMSELoss(nn.Module):
+    def __init__(self):
+        """
+        :param alpha: 第一部分损失的权重
+        :param beta:  第二部分损失的权重
+        """
+        super(ComplexMSELoss, self).__init__()
 
+
+    def forward(self, csi_est, csi_label):
+        """
+        复数信道估计的均方误差 (MSE) 损失函数。
+        x_py: (batch_size, csi_matrix, 2)，估计值
+        y_py: (batch_size, csi_matrix, 2)，真实值
+        """
+        diff = csi_est - csi_label  # 差值，形状保持一致
+        loss = torch.mean(torch.square(torch.sqrt(torch.square(diff[...,0]) + torch.square(diff[...,1]))))
+
+        return loss
+    
 def load_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = CSIFormer().to(device)
-    model.load_state_dict(torch.load(os.path.join('../../checkpoints', model.__class__.__name__ + '_pro_best.pth'), map_location=device)['model_state_dict'])
-    print('load model path : ',os.path.join('../../checkpoints', model.__class__.__name__ + '_pro_best.pth'))
+    model.load_state_dict(torch.load(os.path.join('../../checkpoints', model.__class__.__name__ + '_ppro_best.pth'), map_location=device)['model_state_dict'])
+    print('load model path : ',os.path.join('../../checkpoints', model.__class__.__name__ + '_ppro_best.pth'))
     return model
 
 def test(index,a,b,c,model,device):
@@ -262,25 +282,7 @@ def test(index,a,b,c,model,device):
     print(torch.allclose(csi_ls_i, a))
     print(torch.allclose(pre_csi_i, b))
     print(torch.allclose(csi_label_i, c))
-class ComplexMSELoss(nn.Module):
-    def __init__(self):
-        """
-        :param alpha: 第一部分损失的权重
-        :param beta:  第二部分损失的权重
-        """
-        super(ComplexMSELoss, self).__init__()
 
-
-    def forward(self, csi_est, csi_label):
-        """
-        复数信道估计的均方误差 (MSE) 损失函数。
-        x_py: (batch_size, csi_matrix, 2)，估计值
-        y_py: (batch_size, csi_matrix, 2)，真实值
-        """
-    
-        diff = csi_est - csi_label  # 差值，形状保持一致
-        loss = torch.mean(diff[..., 0]**2 + diff[..., 1]**2)  # 实部和虚部平方和
-        return loss
 def infer(model, csi_ls, pre_csi):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     csi_ls = torch.unsqueeze(torch.tensor(csi_ls, dtype=torch.float32).to(device),0).contiguous()
@@ -288,30 +290,33 @@ def infer(model, csi_ls, pre_csi):
     model.eval()
     with torch.no_grad():
         csi_est = model(csi_ls ,pre_csi)
-    return torch.squeeze(csi_est).cpu().numpy()
+    return np.asfortranarray(torch.squeeze(csi_est).cpu().numpy())
 
-def infer(model, csi_ls, pre_csi, label):
+def infer2(model, csi_ls, pre_csi, label):
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     csi_ls = torch.unsqueeze(torch.tensor(csi_ls, dtype=torch.float32).to(device),0).contiguous()
     pre_csi = torch.unsqueeze(torch.tensor(pre_csi, dtype=torch.float32).to(device),0).contiguous()
-    label = torch.unsqueeze(torch.tensor(label, dtype=torch.float32).to(device),0).contiguous()
-    test(0,csi_ls, pre_csi, label, model, device)
+    label = torch.unsqueeze(torch.tensor(label, dtype=torch.float64).to(device),0).contiguous()
+
+    # test(0,csi_ls, pre_csi, label, model, device)
     model.eval()
     with torch.no_grad():
         csi_est = model(csi_ls ,pre_csi)
+    
     c = ComplexMSELoss()
     print(f'loss:{c(csi_est, label)}')
+    
     x = csi_est[...,0] + 1j*csi_est[...,1]
     y = label[...,0] + 1j*label[...,1]
-
     print(f'loss:{torch.mean(torch.abs(x - y)**2)}')
-    return torch.squeeze(csi_est).cpu().numpy()
 
-    model.eval()
-    with torch.no_grad():
-        csi_est = model(csi_ls_i ,pre_csi_i)
-    c = nn.MSELoss()
-    c(csi_est, csi_label_i)
+    diff = csi_est - label  # 差值，形状保持一致
+    loss = torch.mean(torch.square(torch.sqrt(torch.square(diff[...,0]) + torch.square(diff[...,1]))))
+    print(f'loss : {loss}')
+
+    return np.asfortranarray(torch.squeeze(csi_est).cpu().numpy())
+
 
 # data = hdf5storage.loadmat('./data/raw/valData.mat')
 # csi_ls = torch.tensor(data['csiLSData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
@@ -321,3 +326,31 @@ def infer(model, csi_ls, pre_csi, label):
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # csi_ls = torch.unsqueeze(csi_ls[1].to(device),0).contiguous()
 # pre_csi = torch.unsqueeze(pre_csi[1].to(device),0).contiguous()
+
+'''
+   0.0678 + 0.1479i
+   0.1428 - 0.1584i
+  -0.0121 - 0.4295i
+  -0.3084 - 0.5231i
+  -0.5903 - 0.3906i
+  -0.7067 - 0.0999i
+  -0.5912 + 0.1929i
+  -0.3056 + 0.3259i
+  -0.0075 + 0.2261i
+   0.1406 - 0.0497i
+   0.0608 - 0.3513i
+  -0.2030 - 0.5176i
+
+
+   0.0678 + 0.1392i
+   0.1479 - 0.1559i
+  -0.1042 + 0.2199i
+   0.2614 + 0.1909i
+  -0.4827 - 0.7798i
+  -0.4277 - 0.2293i
+  -0.4316 - 0.4690i
+  -0.8657 - 0.6338i
+   0.0664 + 0.1394i
+   0.1481 - 0.1553i
+
+'''
