@@ -90,8 +90,8 @@ errorRate = comm.ErrorRate;
 
 %% 数据集采集
 numFrame = 2;
-datasetPath = {'../raw/trainDataV3.mat', '../raw/valDataV3.mat'};
-datasetConfig = [20000, 2000];
+datasetPath = {'../raw/trainDataV5.mat'};
+datasetConfig = [20000];
 
 
 for datasetIdx = 1:length(datasetPath)

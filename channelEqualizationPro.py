@@ -12,48 +12,6 @@ import torch.optim as optim
 import math
 import gc
 
-
-# ##### 数据集预处理
-
-class JointCEEQDataset(Dataset):
-    
-    def __init__(self, csi_ls, csi_pre, csi_label, rx_signal, tx_signal):
-        """
-        初始化数据集
-        :param csi_ls: 导频CSI矩阵  [data_size, n_subc, n_sym, n_tx, n_rx, 2]
-        :param csi: CSI矩阵 [data_size, n_subc, n_sym, n_tx, n_rx, 2]
-        :param csi_pre: 历史CSI矩阵 [data_size, n_frame, n_subc, n_sym, n_tx, n_rx, 2]
-        """
-        self.csi_ls = csi_ls
-        self.csi_pre = csi_pre
-        self.csi_label = csi_label
-
-        self.rx_singal = rx_signal
-        self.tx_signal = tx_signal
-
-    def __len__(self):
-        """返回数据集大小"""
-        return self.csi_label.size(0)
-
-    def __getitem__(self, idx):
-        """
-        返回单个样本
-        :param idx: 样本索引
-        :return: 发射导频、接收导频、CSI矩阵
-        """
-        return self.csi_ls[idx], self.csi_pre[idx], self.csi_label[idx], self.rx_singal[idx], self.tx_signal[idx]
-
-def dataset_preprocess(data):
-    # 将数据转换为PyTorch张量
-    csi_ls = torch.tensor(data['csiLSData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
-    csi_pre = torch.tensor(data['csiPreData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
-    csi_label = torch.tensor(data['csiLabelData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
-    rx_signal = torch.tensor(data['txSignalData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_rx, 2]
-    tx_signal = torch.tensor(data['rxSignalData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, 2]
-    del data
-    gc.collect()
-    return JointCEEQDataset(csi_ls, csi_pre, csi_label, rx_signal, tx_signal)
-
 ###############################################################################
 # 正弦/余弦位置编码
 ###############################################################################
@@ -326,6 +284,25 @@ class JointCEEQ(nn.Module):
 ###############################################################################
 # JointCEEQLoss: 联合信道估计与均衡模型联合损失函数
 ###############################################################################
+class ComplexMSELoss(nn.Module):
+    def __init__(self):
+        """
+        :param alpha: 第一部分损失的权重
+        :param beta:  第二部分损失的权重
+        """
+        super(ComplexMSELoss, self).__init__()
+
+
+    def forward(self, csi_est, csi_label):
+        """
+        复数信道估计的均方误差 (MSE) 损失函数。
+        x_py: (batch_size, csi_matrix, 2)，估计值
+        y_py: (batch_size, csi_matrix, 2)，真实值
+        """
+        diff = csi_est - csi_label  # 差值，形状保持一致
+        loss = torch.mean(torch.square(torch.sqrt(torch.square(diff[...,0]) + torch.square(diff[...,1]))))
+        return loss
+   
 class JointCEEQLoss(nn.Module):
     def __init__(self, alpha=0.2, beta=0.8):
         """
@@ -335,7 +312,7 @@ class JointCEEQLoss(nn.Module):
         super(JointCEEQLoss, self).__init__()
         self.alpha = alpha
         self.beta = beta
-        self.mse_loss = nn.MSELoss()
+        self.complex_mse_loss = ComplexMSELoss()
 
     def forward(self, csi_dec, csi_true, equalized_signal, tx_signal):
         """
@@ -347,10 +324,10 @@ class JointCEEQLoss(nn.Module):
         assert csi_dec.shape == csi_true.shape
         assert equalized_signal.shape == tx_signal.shape
         # 计算解码器的损失
-        loss_dec = self.mse_loss(csi_dec, csi_true)
+        loss_dec = self.complex_mse_loss(csi_dec, csi_true)
         
         # 计算均衡器的损失
-        loss_equalized = self.mse_loss(equalized_signal, tx_signal)
+        loss_equalized = self.complex_mse_loss(equalized_signal, tx_signal)
 
         # 加权合并
         total_loss = self.alpha * loss_dec + self.beta * loss_equalized
@@ -461,28 +438,70 @@ def train_model(model, dataloader_train, dataloader_val, criterion, optimizer, s
                 'best_loss': best_loss,
             }, os.path.join(checkpoint_dir, model.__class__.__name__ + '_epoch_'+str(epoch)+'.pth'))
 
+###### 数据集预处理
+
+class JointCEEQDataset(Dataset):
+    
+    def __init__(self, csi_ls, csi_pre, csi_label, rx_signal, tx_signal):
+        """
+        初始化数据集
+        :param csi_ls: 导频CSI矩阵  [data_size, n_subc, n_sym, n_tx, n_rx, 2]
+        :param csi: CSI矩阵 [data_size, n_subc, n_sym, n_tx, n_rx, 2]
+        :param csi_pre: 历史CSI矩阵 [data_size, n_frame, n_subc, n_sym, n_tx, n_rx, 2]
+        """
+        self.csi_ls = csi_ls
+        self.csi_pre = csi_pre
+        self.csi_label = csi_label
+
+        self.rx_singal = rx_signal
+        self.tx_signal = tx_signal
+
+    def __len__(self):
+        """返回数据集大小"""
+        return self.csi_label.size(0)
+
+    def __getitem__(self, idx):
+        """
+        返回单个样本
+        :param idx: 样本索引
+        :return: 发射导频、接收导频、CSI矩阵
+        """
+        return self.csi_ls[idx], self.csi_pre[idx], self.csi_label[idx], self.rx_singal[idx], self.tx_signal[idx]
+
+def dataset_preprocess(data):
+    # 将数据转换为PyTorch张量
+    csi_ls = torch.tensor(data['csiLSData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
+    csi_pre = torch.tensor(data['csiPreData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
+    csi_label = torch.tensor(data['csiLabelData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
+    rx_signal = torch.tensor(data['txSignalData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_rx, 2]
+    tx_signal = torch.tensor(data['rxSignalData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, 2]
+    del data
+    gc.collect()
+    return JointCEEQDataset(csi_ls, csi_pre, csi_label, rx_signal, tx_signal)
 
 print("load data")
-# data_train = hdf5storage.loadmat('/root/autodl-tmp/data/raw/trainData.mat')
-# data_val = hdf5storage.loadmat('/root/autodl-tmp/data/raw/valData.mat')
-data_train = hdf5storage.loadmat('./data/raw/trainData.mat')
-data_val = hdf5storage.loadmat('./data/raw/valData.mat')
+data_train = hdf5storage.loadmat('/root/autodl-tmp/data/raw/trainData.mat')
+data_val = hdf5storage.loadmat('/root/autodl-tmp/data/raw/valData.mat')
+checkpoint_dir = '/root/autodl-tmp/checkpoints'
+# checkpoint_dir = './checkpoints'
+# data_train = hdf5storage.loadmat('./data/raw/trainData.mat')
+# data_val = hdf5storage.loadmat('./data/raw/valData.mat')
 print("load done")
 
 # 主函数执行
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
 lr = 1e-3
-epochs = 1
-batch_size = 10
+epochs = 30
+batch_size = 128
 shuffle_flag = True
 model = JointCEEQ()
 dataset_train = dataset_preprocess(data_train)
 dataset_val = dataset_preprocess(data_val)
 criterion = JointCEEQLoss()
 optimizer = optim.Adam(model.parameters(), lr=lr)
-dataloader_train = DataLoader(dataset=dataset_train, batch_size=batch_size, shuffle=shuffle_flag)
-dataloader_val = DataLoader(dataset=dataset_val, batch_size=batch_size, shuffle=shuffle_flag)
+dataloader_train = DataLoader(dataset=dataset_train, batch_size=batch_size, shuffle=shuffle_flag, num_workers=4)
+dataloader_val = DataLoader(dataset=dataset_val, batch_size=batch_size, shuffle=shuffle_flag, num_workers=4)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1)
 # 计算参数量
 def count_parameters(model):

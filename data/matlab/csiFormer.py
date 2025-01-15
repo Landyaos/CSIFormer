@@ -326,31 +326,3 @@ def infer2(model, csi_ls, pre_csi, label):
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # csi_ls = torch.unsqueeze(csi_ls[1].to(device),0).contiguous()
 # pre_csi = torch.unsqueeze(pre_csi[1].to(device),0).contiguous()
-
-'''
-   0.0678 + 0.1479i
-   0.1428 - 0.1584i
-  -0.0121 - 0.4295i
-  -0.3084 - 0.5231i
-  -0.5903 - 0.3906i
-  -0.7067 - 0.0999i
-  -0.5912 + 0.1929i
-  -0.3056 + 0.3259i
-  -0.0075 + 0.2261i
-   0.1406 - 0.0497i
-   0.0608 - 0.3513i
-  -0.2030 - 0.5176i
-
-
-   0.0678 + 0.1392i
-   0.1479 - 0.1559i
-  -0.1042 + 0.2199i
-   0.2614 + 0.1909i
-  -0.4827 - 0.7798i
-  -0.4277 - 0.2293i
-  -0.4316 - 0.4690i
-  -0.8657 - 0.6338i
-   0.0664 + 0.1394i
-   0.1481 - 0.1553i
-
-'''
