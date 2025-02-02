@@ -338,8 +338,8 @@ class JointCEEQLoss(nn.Module):
 def load_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = JointCEEQ().to(device)
-    print('load model :', os.path.join('../../checkpoints', model.__class__.__name__ + '_pro_latest.pth'))
-    model.load_state_dict(torch.load(os.path.join('../../checkpoints', model.__class__.__name__ + '_pro_latest.pth'), map_location=device)['model_state_dict'])
+    print('load model :', os.path.join('../../checkpoints', model.__class__.__name__ + '_pro_best.pth'))
+    model.load_state_dict(torch.load(os.path.join('../../checkpoints', model.__class__.__name__ + '_pro_best.pth'), map_location=device)['model_state_dict'])
     print('load success.')
     return model
 

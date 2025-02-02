@@ -33,7 +33,7 @@ end
 
 %% 参数设置
 % 系统参数配置
-snrValues = 0:2:30;                                      % 信噪比范围
+snrValues = 0:4:20;                                      % 信噪比范围
 numSubc = 64;                                             % FFT 长度
 numGuardBands = [6;6];                                    % 左右保护带
 numPilot = 4;                                             % 每根天线的导频子载波
@@ -152,7 +152,7 @@ csiLossPerfectLMMSE = zeros(length(snrValues), 1);
 csiLossAI = zeros(length(snrValues), 1);
 
 % 每个SNR统计子帧的数量
-numCountFrame = 10;                                        
+numCountFrame = 40;                                        
 csiPreTemp = zeros(3, numValidSubc, numSym, numTx, numRx);
 for idx = 1:length(snrValues)
     
@@ -342,6 +342,12 @@ end
 %     'msePerfectLMMSE',...
 %     '-v7.3')
 %%
+
+disp(snrValues)
+disp(serPerfectZF(:, 1))
+disp(serLSZF(:, 1))
+disp(serAIEQ(:, 1))
+
 
 %% 图形1：SER误码率图像
 

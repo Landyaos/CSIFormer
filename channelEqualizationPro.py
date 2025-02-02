@@ -221,7 +221,7 @@ class EqaulizerFormer(nn.Module):
             nn.TransformerEncoderLayer(
                 d_model=d_model,
                 nhead=nhead,
-                dim_feedforward=512,
+                dim_feedforward=2048,
                 batch_first=True
             ),
             num_layers=n_layers
@@ -473,8 +473,8 @@ def dataset_preprocess(data):
     csi_ls = torch.tensor(data['csiLSData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
     csi_pre = torch.tensor(data['csiPreData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
     csi_label = torch.tensor(data['csiLabelData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
-    rx_signal = torch.tensor(data['txSignalData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_rx, 2]
-    tx_signal = torch.tensor(data['rxSignalData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, 2]
+    rx_signal = torch.tensor(data['rxSignalData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_rx, 2]
+    tx_signal = torch.tensor(data['txSignalData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, 2]
     del data
     gc.collect()
     return JointCEEQDataset(csi_ls, csi_pre, csi_label, rx_signal, tx_signal)

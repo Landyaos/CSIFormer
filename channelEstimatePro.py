@@ -357,6 +357,12 @@ def train_model(model, dataloader_train, dataloader_val, criterion, optimizer, s
                 'best_loss': best_loss,
             }, os.path.join(checkpoint_dir, model.__class__.__name__ + '_epoch_'+str(epoch)+'.pth'))
 
+model = CSIFormer()
+# 计算参数量
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+print(f"Total trainable parameters: {count_parameters(model)}")
 
 print("load data")
 data_train = hdf5storage.loadmat('/root/autodl-tmp/data/raw/trainData.mat')
