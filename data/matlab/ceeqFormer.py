@@ -221,7 +221,7 @@ class EqaulizerFormer(nn.Module):
             nn.TransformerEncoderLayer(
                 d_model=d_model,
                 nhead=nhead,
-                dim_feedforward=512,
+                dim_feedforward=2048,
                 batch_first=True
             ),
             num_layers=n_layers

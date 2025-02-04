@@ -53,7 +53,7 @@ pathDelays = [0 0.5e-6];                                  % 路径时延
 averagePathGains = [0 -2];                                % 平均路径增益
 % pathDelays = [0 50 120 200 230 500 1600 2300 5000 7000] * 1e-9; 
 % averagePathGains = [-1.0 -1.0 -1.0 -1.0 -1.0 -1.5 -1.5 -1.5 -3.0 -5.0]; 
-maxDopplerShift = 0.001;                                    % 最大多普勒频移
+maxDopplerShift = 250;                                    % 最大多普勒频移
 
 % 信道估计配置
 CEC.pilotAverage = 'UserDefined';
@@ -152,7 +152,7 @@ csiLossPerfectLMMSE = zeros(length(snrValues), 1);
 csiLossAI = zeros(length(snrValues), 1);
 
 % 每个SNR统计子帧的数量
-numCountFrame = 40;                                        
+numCountFrame = 10;                                        
 csiPreTemp = zeros(3, numValidSubc, numSym, numTx, numRx);
 for idx = 1:length(snrValues)
     

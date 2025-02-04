@@ -145,16 +145,9 @@ for datasetIdx = 1:length(datasetPath)
             csiPreTemp(2,:,:,:,:,:) = csiPreTemp(3,:,:,:,:,:);
             csiPreTemp(3,:,:,:,:,1) = real(h);
             csiPreTemp(3,:,:,:,:,2) = imag(h);
-            
-            %% 信道均衡
-            % ToolBox 函数均衡
-            hPerfect = h(dataIndices-6,:,:,:);
-            hReshaped = reshape(hPerfect,[],numTx,numRx);
-            eqSignal = ofdmEqualize(rxDataSignal,hReshaped, noiseVar, Algorithm="mmse");
-            eqSignal = reshape(eqSignal, [], 1);  
-            eqStream = pskdemod(eqSignal, M);
 
-
+            temp = squeeze(complex(csiPreTemp(3,:,:,:,:,1),csiPreTemp(3,:,:,:,:,2)));
+            immse(temp, h)
             if frame < 1
                 continue;
             end

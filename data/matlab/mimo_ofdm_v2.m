@@ -17,7 +17,7 @@ M = 2;                                                    % QPSK 调制（M=4）
 sampleRate = 15.36e6;                                     % 采样率
 pathDelays = [0 0.5e-6 1.2e-6];                           % 路径时延
 averagePathGains = [0 -2 -5];                             % 平均路径增益
-maxDopplerShift = 50;                                     % 最大多普勒频移
+maxDopplerShift = 300;                                     % 最大多普勒频移
 
 % 信道估计配置
 CEC.pilotAverage = 'UserDefined';

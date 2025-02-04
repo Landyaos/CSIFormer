@@ -3,7 +3,7 @@
 snr = 20;                                                 % 信噪比
 numSubc = 64;                                             % FFT 长度
 numGuardBands = [6;6];                                    % 左右保护带
-numPilot = 4;                                             % 每根天线的导频子载波
+numPilot = 8;                                             % 每根天线的导频子载波
 numTx = 2;                                                % 发射天线数量
 numRx = 2;                                                % 接收天线数量
 numSym = 14;                                              % 每帧 OFDM 符号数
@@ -15,9 +15,9 @@ M = 2;                                                    % QPSK 调制（M=4）
 
 % 信道模型配置
 sampleRate = 15.36e6;                                     % 采样率
-pathDelays = [0 0.5e-6 1.2e-6];                           % 路径时延
-averagePathGains = [0 -2 -5];                             % 平均路径增益
-maxDopplerShift = 300;                                    % 最大多普勒频移
+pathDelays = [0 0.5e-6];                                  % 路径时延
+averagePathGains = [0 -2];                                % 平均路径增益
+maxDopplerShift = 0.01;                                   % 最大多普勒频移
 
 % 信道估计配置
 CEC.pilotAverage = 'UserDefined';
@@ -26,10 +26,9 @@ CEC.timeWindow = 3;
 CEC.interpType = 'linear';
 CEC.algorithm = 'ls';
 
-
 % 导频子载波配置
-pilotIndicesAnt1 = [7; 26; 40; 57]; % 天线 1 导频索引
-pilotIndicesAnt2 = [8; 27; 41; 58]; % 天线 2 导频索引
+pilotIndicesAnt1 = [7; 14; 21; 28; 36; 43; 50; 57]; % 天线 1 导频索引
+pilotIndicesAnt2 = [8; 15; 20; 29; 37; 44; 51; 58]; % 天线 2 导频索引
 % 构造 PilotCarrierIndices (3D 矩阵, NPilot-by-NSym-by-NT)
 pilotIndices = zeros(numPilot, numSym, numTx);
 pilotIndices(:, :, 1) = repmat(pilotIndicesAnt1, 1, numSym); % 天线 1
@@ -38,8 +37,16 @@ pilotIndices(:, :, 2) = repmat(pilotIndicesAnt2, 1, numSym); % 天线 2
 % 数据子载波配置
 dataIndices = setdiff((numGuardBands(1)+1):(numSubc-numGuardBands(2)),unique(pilotIndices));
 numDataSubc = length(dataIndices);
-numFrameSymbols = numDataSubc * numSym * numTx;
+numSubFrameSym = numDataSubc * numSym * numTx;
 
+% OFDM调制器
+% ofdmMod = comm.OFDMModulator('FFTLength', numSubc, ...
+%                              'NumGuardBandCarriers', numGuardBands, ...
+%                              'NumSymbols', numSym, ...
+%                              'PilotInputPort', true, ...
+%                              'PilotCarrierIndices', pilotIndices, ...
+%                              'CyclicPrefixLength', cpLength, ...
+%                              'NumTransmitAntennas', numTx);
 
 % OFDM解调器
 ofdmDemod = comm.OFDMDemodulator('FFTLength', numSubc, ...
@@ -49,14 +56,6 @@ ofdmDemod = comm.OFDMDemodulator('FFTLength', numSubc, ...
                                   'PilotCarrierIndices', pilotIndices, ...
                                   'CyclicPrefixLength', cpLength, ...
                                   'NumReceiveAntennas', numRx);
-% OFDM调制器 两种方式均可
-% ofdmMod = comm.OFDMModulator('FFTLength', numSubc, ...
-%                              'NumGuardBandCarriers', numGuardBands, ...
-%                              'NumSymbols', numSym, ...
-%                              'PilotInputPort', true, ...
-%                              'PilotCarrierIndices', pilotIndices, ...
-%                              'CyclicPrefixLength', cpLength, ...
-%                              'NumTransmitAntennas', numTx);
 ofdmMod = comm.OFDMModulator(ofdmDemod);
 
 % 信道模型
@@ -74,26 +73,33 @@ mimoChannel = comm.MIMOChannel(...
 %% 数据发送与接收
 
 % 数据符号生成
-txSymStream = randi([0 M-1], numFrameSymbols, 1); 
+txSymStream = randi([0 M-1], numSubFrameSym, 1); 
 % 调制成符号
 dataSignal = pskmod(txSymStream, M);  % 调制后的符号为复数形式
+disp(size(dataSignal))
 % 重塑数据符号为所需维度
 dataSignal = reshape(dataSignal, numDataSubc, numSym, numTx);
+
 % 导频符号生成
 pilotSignal = repmat(1+1i, numPilot, numSym, numTx);
 
 % OFDM 调制
 txSignal = ofdmMod(dataSignal, pilotSignal); % 结果为 (80 × 14 × 2)，包含循环前缀的时域信号
 
+
+channel = repmat(1,2,2);
+for subc = 1:numSubc
+    for sym = 1:numSym
+        
+    end
+end
 % 通过信道模型获取接收信号和路径增益
-[airSignal, pathGains] = mimoChannel(txSignal); % pathGains: [总样本数, N_path, numTransmitAntennas, numReceiveAntennas]
+[transmitSignal, pathGains] = mimoChannel(txSignal); % pathGains: [总样本数, N_path, numTransmitAntennas, numReceiveAntennas]
 
 % 噪声
-[rxSignal, noiseVar] = awgn(airSignal, snr, "measured");
+[rxSignal, noiseVar] = awgn(transmitSignal, snr, "measured");
 
-% OFDM 解调 
-% rxPilotSignal: 接收导频信号(numPilotSubc x numSym x numTx x numRx)
-% rxDataSignal: 接收数据符号(numDataSubc x numSym x numRx)
+% OFDM 解调
 [rxDataSignal, rxPilotSignal] = ofdmDemod(rxSignal);
 
 
@@ -102,28 +108,33 @@ txSignal = ofdmMod(dataSignal, pilotSignal); % 结果为 (80 × 14 × 2)，包�
 mimoChannelInfo = info(mimoChannel);
 pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
 toffset = mimoChannelInfo.ChannelFilterDelay;
-hPerfect = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, dataIndices, toffset); % Nsc x Nsym x Nt x Nr
-% 自定义 LS信道估计
+h = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, dataIndices, toffset); % Nsc x Nsym x Nt x Nr
+% 自定义 信道估计
 hEst = channelEstimate(rxPilotSignal, pilotSignal, dataIndices, pilotIndices, CEC);
 
 %% 信道均衡
-% ToolBox 函数均衡
-hReshaped = reshape(hPerfect,[],numTx,numRx);
+
+hReshaped = reshape(hEst,[],numTx,numRx);
 eqSignal = ofdmEqualize(rxDataSignal,hReshaped, noiseVar, Algorithm="mmse");
+% 将接收到的数据符号转换为列向量
 eqSignal = reshape(eqSignal, [], 1);  
+% 解调接收数据符号
 eqStream = pskdemod(eqSignal, M);
 
-% MMSE 均衡
-eqSignalMMSE = myMMSEequalize(hPerfect,rxDataSignal, noiseVar);
+eqSignalMMSE = myMMSEequalize(h,rxDataSignal, noiseVar);
 eqSignalMMSE = reshape(eqSignalMMSE, [], 1);  
 eqStreamMMSE = pskdemod(eqSignalMMSE, M);
 
-% ZF 均衡
-eqSignalZF = myZFequalize(hPerfect,rxDataSignal);
+eqSignalZF = myZFequalize(h,rxDataSignal);
+
+disp(immse(dataSignal, eqSignalZF))
+
 eqSignalZF = reshape(eqSignalZF, [], 1);  
 eqStreamZF = pskdemod(eqSignalZF, M);
 
+
 %% 评价
+
 errorRate = comm.ErrorRate;
 BER_perfect = errorRate(txSymStream, eqStream);
 fprintf('\n Perfect Symbol error rate = %d from %d errors in %d symbols\n',BER_perfect);
@@ -152,6 +163,7 @@ function [H_est] = channelEstimate(rxPilotSignal,refPilotSignal, dataIndices, pi
     %   
     % 输出：
     %   H_est: 估计的信道响应矩阵 (numSubc x numSym x numTx x numRx)
+    %   noiseVar: 噪声平均功率
 
     % 提取信号维度
     numDataSubc = length(dataIndices);
@@ -165,6 +177,7 @@ function [H_est] = channelEstimate(rxPilotSignal,refPilotSignal, dataIndices, pi
             % 获取当前发射 - 接收天线对的导频信号
             pilotRxSignal = rxPilotSignal(:,:,tx,rx);
             pilotRefSignal = refPilotSignal(:, :, tx);
+
             H_ls = pilotRxSignal ./ pilotRefSignal; 
             % 导频平均
             H_avg = pilotAveraging(H_ls, CEC.freqWindow, CEC.timeWindow);
