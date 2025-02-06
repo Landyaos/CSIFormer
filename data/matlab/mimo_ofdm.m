@@ -1,23 +1,23 @@
 %% 参数设置
 % 系统参数配置
-snr = 20;                                                 % 信噪比
 numSubc = 64;                                             % FFT 长度
 numGuardBands = [6;6];                                    % 左右保护带
+
 numPilot = 4;                                             % 每根天线的导频子载波
 numTx = 2;                                                % 发射天线数量
 numRx = 2;                                                % 接收天线数量
 numSym = 14;                                              % 每帧 OFDM 符号数
 numStream = 2;                                            % 数据流个数
-cpLength = 16;                                            % 循环前缀长度
+cpLength = 25;                                            % 循环前缀长度
 
 % 调制参数配置
-M = 2;                                                    % QPSK 调制（M=4）
+M = 2;                                                   % QPSK 调制（M=16）
 
 % 信道模型配置
 sampleRate = 15.36e6;                                     % 采样率
 pathDelays = [0 0.5e-6 1.2e-6];                           % 路径时延
 averagePathGains = [0 -2 -5];                             % 平均路径增益
-maxDopplerShift = 300;                                    % 最大多普勒频移
+maxDopplerShift = 50;                                    % 最大多普勒频移
 
 % 信道估计配置
 CEC.pilotAverage = 'UserDefined';
@@ -59,6 +59,7 @@ ofdmDemod = comm.OFDMDemodulator('FFTLength', numSubc, ...
 %                              'NumTransmitAntennas', numTx);
 ofdmMod = comm.OFDMModulator(ofdmDemod);
 
+
 % 信道模型
 mimoChannel = comm.MIMOChannel(...
     'SampleRate', sampleRate, ...
@@ -71,70 +72,92 @@ mimoChannel = comm.MIMOChannel(...
     'FadingDistribution', 'Rayleigh', ...
     'PathGainsOutputPort', true);   % 开启路径增益输出
 
-%% 数据发送与接收
 
-% 数据符号生成
-txSymStream = randi([0 M-1], numFrameSymbols, 1); 
-% 调制成符号
-dataSignal = pskmod(txSymStream, M);  % 调制后的符号为复数形式
-% 重塑数据符号为所需维度
-dataSignal = reshape(dataSignal, numDataSubc, numSym, numTx);
-% 导频符号生成
-pilotSignal = repmat(1+1i, numPilot, numSym, numTx);
+snrValues = 0:5:30;
+serPerfectMMSE = zeros(length(snrValues), 3);
+serLSZF = zeros(length(snrValues), 3);
+serLSMMSE = zeros(length(snrValues), 3);
 
-% OFDM 调制
-txSignal = ofdmMod(dataSignal, pilotSignal); % 结果为 (80 × 14 × 2)，包含循环前缀的时域信号
+for idx = 1:1:length(snrValues)
+    snr = snrValues(idx);
+    toolBoxErrorRate = comm.ErrorRate;
+    zfErrorRate = comm.ErrorRate;
+    mmseErrorRate = comm.ErrorRate;
+    for frame = 1:1:20
+        %% 数据发送与接收
+        % 数据符号生成
+        txSymStream = randi([0 M-1], numFrameSymbols, 1); 
+        % 调制成符号
+        dataSignal = pskmod(txSymStream, M);  % 调制后的符号为复数形式
+        % 重塑数据符号为所需维度
+        dataSignal = reshape(dataSignal, numDataSubc, numSym, numTx);
+        % 导频符号生成
+        pilotSignal = repmat(1+1i, numPilot, numSym, numTx);
+        
+        % OFDM 调制
+        txSignal = ofdmMod(dataSignal, pilotSignal); % 结果为 (80 × 14 × 2)，包含循环前缀的时域信号
+        
+        % 通过信道模型获取接收信号和路径增益
+        [airSignal, pathGains] = mimoChannel(txSignal); % pathGains: [总样本数, N_path, numTransmitAntennas, numReceiveAntennas]
+        
+        % 噪声
+        [rxSignal, noiseVar] = awgn(airSignal, snr, "measured");
+        
+        % OFDM 解调 
+        % rxPilotSignal: 接收导频信号(numPilotSubc x numSym x numTx x numRx)
+        % rxDataSignal: 接收数据符号(numDataSubc x numSym x numRx)
+        [rxDataSignal, rxPilotSignal] = ofdmDemod(rxSignal);
+        
+        % CSI矩阵
+        mimoChannelInfo = info(mimoChannel);
+        pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
+        toffset = mimoChannelInfo.ChannelFilterDelay;
+        hPerfect = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, dataIndices, toffset); % Nsc x Nsym x Nt x Nr
 
-% 通过信道模型获取接收信号和路径增益
-[airSignal, pathGains] = mimoChannel(txSignal); % pathGains: [总样本数, N_path, numTransmitAntennas, numReceiveAntennas]
+        % 自定义 LS信道估计
+        hEst = channelEstimate(rxPilotSignal, pilotSignal, dataIndices, pilotIndices, CEC);
+        
+        %% 信道均衡
+        % 理想信道估计 MMSE均衡
+        hReshaped = reshape(hPerfect,[],numTx,numRx);
+        eqSignal = ofdmEqualize(rxDataSignal,hReshaped, noiseVar, Algorithm="mmse");
+        eqSignal = reshape(eqSignal, [], 1);  
+        eqStream = pskdemod(eqSignal, M);
+        
+        % MMSE 均衡
+        eqSignalMMSE = myMMSEequalize(hEst,rxDataSignal, noiseVar);
+        eqSignalMMSE = reshape(eqSignalMMSE, [], 1);  
+        eqStreamMMSE = pskdemod(eqSignalMMSE, M);
+        
+        % ZF 均衡
+        eqSignalZF = myZFequalize(hEst,rxDataSignal);
+        eqSignalZF = reshape(eqSignalZF, [], 1);  
+        eqStreamZF = pskdemod(eqSignalZF, M);
 
-% 噪声
-[rxSignal, noiseVar] = awgn(airSignal, snr, "measured");
+        %% 评价
+        serPerfectMMSE(idx,:) = toolBoxErrorRate(txSymStream, eqStream);
+        serLSZF(idx,:) = zfErrorRate(txSymStream, eqStreamZF);
+        serLSMMSE(idx,:) = mmseErrorRate(txSymStream, eqStreamMMSE);
+    end
+end
 
-% OFDM 解调 
-% rxPilotSignal: 接收导频信号(numPilotSubc x numSym x numTx x numRx)
-% rxDataSignal: 接收数据符号(numDataSubc x numSym x numRx)
-[rxDataSignal, rxPilotSignal] = ofdmDemod(rxSignal);
+figure;
+hold on;
+% 绘制每种算法的误符号率曲线
+plot(snrValues, serPerfectMMSE(:, 1), '-o', 'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
+plot(snrValues, serLSZF(:, 1), '-s', 'LineWidth', 1.5, 'DisplayName', 'LS ZF');
+plot(snrValues, serLSMMSE(:, 1), '-d', 'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
 
+% 设置图形属性
+grid on;
+xlabel('SNR (dB)');
+ylabel('Symbol Error Rate (SER)');
+title('SER vs. SNR for Different Channel Estimation and Equalization Algorithms');
+legend('Location', 'best');
+set(gca, 'YScale', 'log');  % 将 Y 轴设置为对数坐标
 
-%% 信道估计
-% CSI矩阵 完美信道估计 作为LABEL
-mimoChannelInfo = info(mimoChannel);
-pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
-toffset = mimoChannelInfo.ChannelFilterDelay;
-hPerfect = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, dataIndices, toffset); % Nsc x Nsym x Nt x Nr
-% 自定义 LS信道估计
-hEst = channelEstimate(rxPilotSignal, pilotSignal, dataIndices, pilotIndices, CEC);
-
-%% 信道均衡
-% ToolBox 函数均衡
-hReshaped = reshape(hPerfect,[],numTx,numRx);
-eqSignal = ofdmEqualize(rxDataSignal,hReshaped, noiseVar, Algorithm="mmse");
-eqSignal = reshape(eqSignal, [], 1);  
-eqStream = pskdemod(eqSignal, M);
-
-% MMSE 均衡
-eqSignalMMSE = myMMSEequalize(hPerfect,rxDataSignal, noiseVar);
-eqSignalMMSE = reshape(eqSignalMMSE, [], 1);  
-eqStreamMMSE = pskdemod(eqSignalMMSE, M);
-
-% ZF 均衡
-eqSignalZF = myZFequalize(hPerfect,rxDataSignal);
-eqSignalZF = reshape(eqSignalZF, [], 1);  
-eqStreamZF = pskdemod(eqSignalZF, M);
-
-%% 评价
-errorRate = comm.ErrorRate;
-BER_perfect = errorRate(txSymStream, eqStream);
-fprintf('\n Perfect Symbol error rate = %d from %d errors in %d symbols\n',BER_perfect);
-
-reset(errorRate)
-BER_ls_zf = errorRate(txSymStream, eqStreamZF);
-fprintf('\n LS ZF   Symbol error rate = %d from %d errors in %d symbols\n',BER_ls_zf);
-
-reset(errorRate)
-BER_ls_mmse = errorRate(txSymStream, eqStreamMMSE);
-fprintf('\n LS MMSE Symbol error rate = %d from %d errors in %d symbols\n',BER_ls_mmse);
+% 显示图形
+hold off;
 
 
 %% 自定义函数

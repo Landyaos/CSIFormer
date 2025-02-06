@@ -5,12 +5,24 @@ miPyPath = 'C:\Users\stone\AppData\Local\Programs\Python\Python312\python.exe';
 lenPyPath = 'D:\Python\python.exe';
 pyenv('Version', lenPyPath)
 csiModel = py.csiFormer.load_model();
-ceeqModel = py.ceeqFormer.load_model();
+% ceeqModel = py.ceeqFormer.load_model();
+eqDnnModel = py.eqDnn.load_model();
+ceDnnModel = py.ceDnn.load_model();
 
 function [csi_est] = csiInfer(model, csi_ls, pre_csi)
     csi_ls = py.numpy.array(cat(ndims(csi_ls)+1, real(csi_ls), imag(csi_ls)));
     pre_csi = py.numpy.array(cat(ndims(pre_csi)+1, real(pre_csi), imag(pre_csi)));
     csi_est = py.csiFormer.infer(model, csi_ls, pre_csi);
+    % 转换 Python numpy 输出为 MATLAB 矩阵
+    csi_est = double(py.array.array('d', py.numpy.nditer(csi_est)));
+    csi_est = reshape(csi_est, 52,14,2,2,2);
+    csi_est = complex(csi_est(:,:,:,:,1), csi_est(:,:,:,:,2));
+end
+
+function [csi_est] = ceInfer(model, tx_pilot_signal, rx_pilot_signal)
+    tx_pilot_signal = py.numpy.array(cat(ndims(tx_pilot_signal)+1, real(tx_pilot_signal), imag(tx_pilot_signal)));
+    rx_pilot_signal = py.numpy.array(cat(ndims(rx_pilot_signal)+1, real(rx_pilot_signal), imag(rx_pilot_signal)));
+    csi_est = py.ceDnn.infer(model, tx_pilot_signal, rx_pilot_signal);
     % 转换 Python numpy 输出为 MATLAB 矩阵
     csi_est = double(py.array.array('d', py.numpy.nditer(csi_est)));
     csi_est = reshape(csi_est, 52,14,2,2,2);
@@ -30,10 +42,22 @@ function [equalized_signal] = ceeqInfer(model, csi_ls, pre_csi, rx_signal)
     equalized_signal = complex(equalized_signal(:,:,:,1), equalized_signal(:,:,:,2));
 end
 
+function [equalized_signal] = eqInfer(model, csi_est, rx_signal)
+    csi_est = py.numpy.array(cat(ndims(csi_est)+1, real(csi_est), imag(csi_est)));
+    rx_signal = py.numpy.array(cat(ndims(rx_signal)+1, real(rx_signal), imag(rx_signal)));
+    
+    equalized_signal = py.eqDnn.infer(model, csi_est, rx_signal, rx_signal);
+
+    % 转换 Python numpy 输出为 MATLAB 矩阵
+    equalized_signal = double(py.array.array('d', py.numpy.nditer(equalized_signal)));
+    equalized_signal = reshape(equalized_signal, 52,14,2,2);
+    equalized_signal = complex(equalized_signal(:,:,:,1), equalized_signal(:,:,:,2));
+end
+
 
 %% 参数设置
 % 系统参数配置
-snrValues = 0:4:20;                                      % 信噪比范围
+snrValues = 0:4:30;                                      % 信噪比范围
 numSubc = 64;                                             % FFT 长度
 numGuardBands = [6;6];                                    % 左右保护带
 numPilot = 4;                                             % 每根天线的导频子载波
@@ -188,6 +212,11 @@ for idx = 1:length(snrValues)
             originSignal(pilotIndices(:,1,tx),:,tx) = pilotSignal(:, :, tx);
 
         end    
+        tx_pilot_signal = zeros(numSubc, numSym, numTx);
+        for tx = 1:numTx
+            tx_pilot_signal(pilotIndices(:,1,tx),:,tx) = pilotSignal(:, :, tx);
+
+        end  
 
         % OFDM 调制
         txSignal = ofdmMod(dataSignal, pilotSignal); % 结果为 (80 × 14 × 2)，包含循环前缀的时域信号
@@ -221,6 +250,12 @@ for idx = 1:length(snrValues)
                 finalSignal(pilotIndices(:,1,tx),:,rx) = rxPilotSignal(:,:,tx,rx);
             end
         end
+        rx_pilot_signal = zeros(numSubc, numSym, numRx);
+        for rx = 1:numRx
+            for tx = 1:numTx
+                rx_pilot_signal(pilotIndices(:,1,tx),:,rx) = rxPilotSignal(:,:,tx,rx);
+            end
+        end
 
         %% AI信道估计与均衡
         % 计算导频处信道估计
@@ -230,10 +265,12 @@ for idx = 1:length(snrValues)
                 csi_ls(pilotIndices(:,1,tx),:,tx,rx) = rxPilotSignal(:,:,tx,rx) ./ pilotSignal(:, :, tx);
             end
         end
-        csi_ls = csi_ls(validSubcIndices,:,:,:);
-        csi_ai = csiInfer(csiModel,csi_ls, csiPreTemp(1:2,:,:,:,:));
+        csi_ai = csiInfer(csiModel,csi_ls(validSubcIndices,:,:,:), csiPreTemp(1:2,:,:,:,:));
+
+        % csi_ai = ceInfer(ceDnnModel, tx_pilot_signal(validSubcIndices,:,:,:), rx_pilot_signal(validSubcIndices,:,:,:));
         csi_ai = csi_ai(dataIndiceMask,:,:,:);
         csiEst_LOSS_AI = csiEst_LOSS_AI + mean(abs(hPerfect(:) - csi_ai(:)).^2);
+
         % AI信道估计 ZF均衡
         hReshaped = reshape(csi_ai,[],numTx,numRx);
         eqSignalAIZF = ofdmEqualize(rxDataSignal,hReshaped, noiseVar, Algorithm="mmse");
@@ -242,7 +279,8 @@ for idx = 1:length(snrValues)
         serAI(idx, :) = errorRateAI(txSymStream, rxSymAI);
         
         %% AI联合信道估计与均衡
-        eqAISignal = ceeqInfer(ceeqModel, csi_ls, csiPreTemp(1:2,:,:,:,:), finalSignal(validSubcIndices,:,:));
+        % eqAISignal = ceeqInfer(ceeqModel, csi_ls(validSubcIndices,:,:,:), csiPreTemp(1:2,:,:,:,:), finalSignal(validSubcIndices,:,:));
+        eqAISignal = eqInfer(eqDnnModel, hValidSubc, finalSignal(validSubcIndices,:,:));
         eqAISignal = eqAISignal(dataIndiceMask, :,:);
         eqAISignal = reshape(eqAISignal, [], 1);
         rxSymAIEQ = pskdemod(eqAISignal, M);

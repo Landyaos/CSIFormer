@@ -1,28 +1,42 @@
+clear;
+clc;
+%%
+miPyPath = 'C:\Users\stone\AppData\Local\Programs\Python\Python312\python.exe';
+lenPyPath = 'D:\Python\python.exe';
+pyenv('Version', lenPyPath)
+model = py.eqDnn.load_model();
+
+function [equalized_signal] = eqInfer(model, csi_est, rx_signal)
+    csi_est = py.numpy.array(cat(ndims(csi_est)+1, real(csi_est), imag(csi_est)));
+    rx_signal = py.numpy.array(cat(ndims(rx_signal)+1, real(rx_signal), imag(rx_signal)));
+    
+    equalized_signal = py.eqDnn.infer(model, csi_est, rx_signal, rx_signal);
+
+    % 转换 Python numpy 输出为 MATLAB 矩阵
+    equalized_signal = double(py.array.array('d', py.numpy.nditer(equalized_signal)));
+    size(equalized_signal)
+    equalized_signal = reshape(equalized_signal, 224,14,2,2);
+    equalized_signal = complex(equalized_signal(:,:,:,1), equalized_signal(:,:,:,2));
+end
 %% 参数设置
 % 系统参数配置
-snr = 15;                                                 % 信噪比
-numSubc = 64;                                             % FFT 长度
-numGuardBands = [6;6];                                    % 左右保护带
-numPilot = 4;                                             % 每根天线的导频子载波
+numSubc = 256;                                            % FFT 长度
+numGuardBands = [16;15];                                  % 左右保护带
+numPilot = (numSubc-sum(numGuardBands)-1)/4;            % 每根天线的导频子载波
 numTx = 2;                                                % 发射天线数量
 numRx = 2;                                                % 接收天线数量
 numSym = 14;                                              % 每帧 OFDM 符号数
 numStream = 2;                                            % 数据流个数
-cpLength = 16;                                            % 循环前缀长度
+cpLength = numSubc/4;                                            % 循环前缀长度
 
 % 调制参数配置
 M = 4;                                                    % QPSK 调制（M=4）
-bitsPerSym = log2(M);                                     % 每符号比特数
-
-% 信道编码参数
-trellis = poly2trellis(7, [171 133]);                     % 卷积码结构
-codeRate = 1/2;                                           % 编码速率
 
 % 信道模型配置
-sampleRate = 15.36e6;                                     % 采样率
-pathDelays = [0 0.5e-6];                                  % 路径时延
-averagePathGains = [0 -2];                                % 平均路径增益
-maxDopplerShift = 300;                                    % 最大多普勒频移
+sampleRate = 15.36e6;                                        % 采样率
+pathDelays = [0, 30, 70, 90, 110, 190, 410] * 1e-9;       % 路径时延
+averagePathGains = [0, -1.0, -2.0, -3.0, -8.0, -17.2, -20.8];                             % 平均路径增益
+maxDopplerShift = 5.5;                                    % 最大多普勒频移
 
 % 信道估计配置
 CEC.pilotAverage = 'UserDefined';
@@ -31,27 +45,49 @@ CEC.timeWindow = 3;
 CEC.interpType = 'linear';
 CEC.algorithm = 'ls';
 
+% 信号导频分布配置
+validSubcIndices = setdiff((numGuardBands(1)+1):(numSubc-numGuardBands(2)), numSubc/2+1);
+numValidSubc = length(validSubcIndices);
+
 % 导频子载波配置
-pilotIndicesAnt1 = [7; 26; 40; 57]; % 天线 1 导频索引
-pilotIndicesAnt2 = [8; 27; 41; 58]; % 天线 2 导频索引
+pilotIndicesAnt1 = (numGuardBands(1)+1:4:numSubc-numGuardBands(2))';                        % 发射天线1的导频子载波位置
+pilotIndicesAnt2 = (numGuardBands(1)+2:4:numSubc-numGuardBands(2))';                        % 发射天线2的导频子载波位置
+pilotIndicesAnt2(end) = pilotIndicesAnt1(end)-1;
+pilotIndicesAnt1 = pilotIndicesAnt1(pilotIndicesAnt1~=numSubc/2+1);                         % DC子载波不允许设为导频，因此去除
+pilotIndicesAnt2 = pilotIndicesAnt2(pilotIndicesAnt1~=numSubc/2+1);                         % DC子载波不允许设为导频，因此去除
+
+[pilotIndicesAnt1, pilotIndicesAnt2];
+
+% 构造 PilotCarrierIndices (3D 矩阵, NPilot-by-NSym-by-NT)
 pilotIndices = zeros(numPilot, numSym, numTx);
-pilotIndices(:, :, 1) = repmat(pilotIndicesAnt1, 1, numSym);
-pilotIndices(:, :, 2) = repmat(pilotIndicesAnt2, 1, numSym);
+pilotIndices(:, :, 1) = repmat(pilotIndicesAnt1, 1, numSym); % 天线 1
+pilotIndices(:, :, 2) = repmat(pilotIndicesAnt2, 1, numSym); % 天线 2
 
 % 数据子载波配置
-dataIndices = setdiff((numGuardBands(1)+1):(numSubc-numGuardBands(2)),unique(pilotIndices));
+dataIndices = setdiff((numGuardBands(1)+1):(numSubc-numGuardBands(2)),[unique(pilotIndices); numSubc/2+1]);
 numDataSubc = length(dataIndices);
-numFrameSymbols = numDataSubc * numSym * numTx;           % 总数据符号数
+numFrameSymbols = numDataSubc * numSym * numTx;
+
 
 % OFDM解调器
 ofdmDemod = comm.OFDMDemodulator('FFTLength', numSubc, ...
                                   'NumGuardBandCarriers', numGuardBands, ...
+                                  'RemoveDCCarrier', true,...
                                   'NumSymbols', numSym, ...
                                   'PilotOutputPort', true, ...
                                   'PilotCarrierIndices', pilotIndices, ...
                                   'CyclicPrefixLength', cpLength, ...
                                   'NumReceiveAntennas', numRx);
-ofdmMod = comm.OFDMModulator(ofdmDemod);
+% OFDM调制器 两种方式均可
+ofdmMod = comm.OFDMModulator('FFTLength', numSubc, ...
+                             'NumGuardBandCarriers', numGuardBands, ...
+                             'InsertDCNull', true,...
+                             'NumSymbols', numSym, ...
+                             'PilotInputPort', true, ...
+                             'PilotCarrierIndices', pilotIndices, ...
+                             'CyclicPrefixLength', cpLength, ...
+                             'NumTransmitAntennas', numTx);
+
 
 % 信道模型
 mimoChannel = comm.MIMOChannel(...
@@ -63,59 +99,111 @@ mimoChannel = comm.MIMOChannel(...
     'NumTransmitAntennas', numTx, ...
     'NumReceiveAntennas', numRx, ...
     'FadingDistribution', 'Rayleigh', ...
-    'PathGainsOutputPort', true);
+    'PathGainsOutputPort', true);   % 开启路径增益输出
 
-%% 数据发送与接收
-% 生成信息比特
-numInfoBits = numFrameSymbols * bitsPerSym * codeRate;     % 计算信息比特数
-infoBits = randi([0 1], numInfoBits, 1);                   % 生成随机信息比特
-
-% 信道编码
-encodedBits = convenc(infoBits, trellis);                  % 卷积编码
-
-% 调制
-txSymStream = pskmod(encodedBits, M, 'InputType', 'bit');  % QPSK调制
-
-% 重塑数据符号维度
-dataSignal = reshape(txSymStream, numDataSubc, numSym, numTx);
-
-% 导频符号生成
-pilotSignal = repmat(1+1i, numPilot, numSym, numTx);
-
-% OFDM 调制
-txSignal = ofdmMod(dataSignal, pilotSignal);
-
-% 通过信道模型
-[airSignal, pathGains] = mimoChannel(txSignal);
-
-% 添加噪声
-[rxSignal, noiseVar] = awgn(airSignal, snr, "measured");
-
-% OFDM 解调 
-[rxDataSignal, rxPilotSignal] = ofdmDemod(rxSignal);
-
-%% 信道估计与均衡
-% 完美信道估计
 mimoChannelInfo = info(mimoChannel);
 pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
 toffset = mimoChannelInfo.ChannelFilterDelay;
-hPerfect = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, dataIndices, toffset);
 
-% LS信道估计
-hEst = channelEstimate(rxPilotSignal, pilotSignal, dataIndices, pilotIndices, CEC);
+snrValues = 0:5:30;
+serPerfectMMSE = zeros(length(snrValues), 3);
+serLSZF = zeros(length(snrValues), 3);
+serLSMMSE = zeros(length(snrValues), 3);
 
-% MMSE 均衡
-eqSignalMMSE = myMMSEequalize(hEst, rxDataSignal, noiseVar);
-eqSignalMMSE = reshape(eqSignalMMSE, [], 1);
+for idx = 1:1:length(snrValues)
+    snr = snrValues(idx);
+    toolBoxErrorRate = comm.ErrorRate;
+    zfErrorRate = comm.ErrorRate;
+    mmseErrorRate = comm.ErrorRate;
 
-% 计算LLR并译码
-llr = pskdemod(eqSignalMMSE, M, 'OutputType', 'approxllr', 'NoiseVariance', noiseVar);
-decodedBits = vitdec(llr, trellis, 34, 'trunc', 'unquant'); % 维特比译码
+    for frame = 1:1:30
+        %% 数据发送与接收
+        % 数据符号生成
+        txSymStream = randi([0 M-1], numFrameSymbols, 1); 
+        % 调制成符号
+        dataSignal = pskmod(txSymStream, M);  % 调制后的符号为复数形式
+        % 重塑数据符号为所需维度
+        dataSignal = reshape(dataSignal, numDataSubc, numSym, numTx);
+        % 导频符号生成
+        pilotSignal = repmat(1+1i, numPilot, numSym, numTx);
+        
+        % OFDM 调制
+        txSignal = ofdmMod(dataSignal, pilotSignal); 
+        
+        % 通过信道模型获取接收信号和路径增益
+        [airSignal, pathGains] = mimoChannel(txSignal); % pathGains: [总样本数, N_path, numTransmitAntennas, numReceiveAntennas]
+        % 去滤波器时延
+        airSignal = [airSignal((toffset+1):end,:); zeros(toffset,2)];
 
-%% 性能评估
-errorRate = comm.ErrorRate;
-BER = errorRate(infoBits, decodedBits(1:length(infoBits))); % 计算BER
-fprintf('\nBER = %d from %d errors in %d bits\n', BER);
+        % 噪声
+        [rxSignal, noiseVar] = awgn(airSignal, snr, "measured");
+        
+        % OFDM 解调 
+        % rxPilotSignal: 接收导频信号(numPilotSubc x numSym x numTx x numRx)
+        % rxDataSignal: 接收数据符号(numDataSubc x numSym x numRx)
+        [rxDataSignal, rxPilotSignal] = ofdmDemod(rxSignal);
+        
+        % CSI矩阵
+        hValid = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, validSubcIndices, toffset); % Nsc x Nsym x Nt x Nr
+        hPerfect = hValid(dataIndices-numGuardBands(1),:,:,:);
+
+        % 自定义 LS信道估计
+        hEst = channelEstimate(rxPilotSignal, pilotSignal, dataIndices, pilotIndices);
+        
+        %% 信道均衡
+        % 理想信道估计 MMSE均衡
+        hReshaped = reshape(hPerfect,[],numTx,numRx);
+        eqSignal = ofdmEqualize(rxDataSignal,hReshaped, noiseVar, Algorithm="mmse");
+        % 接收信号
+        finalSignal = zeros(numSubc, numSym, numRx);
+        finalSignal(dataIndices,:,:) = rxDataSignal;
+        for rx = 1:numRx
+            for tx = 1:numTx
+                finalSignal(pilotIndices(:,1,tx),:,rx) = rxPilotSignal(:,:,tx,rx);
+            end
+        end
+        
+        eqSignal = eqInfer(model, hValid, finalSignal(validSubcIndices,:,:));
+        eqSignal = eqSignal(dataIndices - numGuardBands(1),:,:);
+        eqSignal = reshape(eqSignal, [], 1);  
+        eqStream = pskdemod(eqSignal, M);
+        eqSignal = reshape(eqSignal, [], 1);  
+        eqStream = pskdemod(eqSignal, M);
+        
+        % MMSE 均衡
+        eqSignalMMSE = myMMSEequalize(hEst,rxDataSignal, noiseVar);
+        eqSignalMMSE = reshape(eqSignalMMSE, [], 1);  
+        eqStreamMMSE = pskdemod(eqSignalMMSE, M);
+        
+        % ZF 均衡
+        eqSignalZF = myZFequalize(hEst,rxDataSignal);
+        eqSignalZF = reshape(eqSignalZF, [], 1);  
+        eqStreamZF = pskdemod(eqSignalZF, M);
+
+        %% 评价
+        serPerfectMMSE(idx,:) = toolBoxErrorRate(txSymStream, eqStream);
+        serLSZF(idx,:) = zfErrorRate(txSymStream, eqStreamZF);
+        serLSMMSE(idx,:) = mmseErrorRate(txSymStream, eqStreamMMSE);
+    end
+end
+
+figure;
+hold on;
+% 绘制每种算法的误符号率曲线
+plot(snrValues, serPerfectMMSE(:, 1), '-o', 'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
+plot(snrValues, serLSZF(:, 1), '-s', 'LineWidth', 1.5, 'DisplayName', 'LS ZF');
+plot(snrValues, serLSMMSE(:, 1), '-d', 'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
+
+% 设置图形属性
+grid on;
+xlabel('SNR (dB)');
+ylabel('Symbol Error Rate (SER)');
+title('SER vs. SNR for Different Channel Estimation and Equalization Algorithms');
+legend('Location', 'best');
+set(gca, 'YScale', 'log');  % 将 Y 轴设置为对数坐标
+
+% 显示图形
+hold off;
 
 
 %% 自定义函数
@@ -143,16 +231,13 @@ function [H_est] = channelEstimate(rxPilotSignal,refPilotSignal, dataIndices, pi
 
     for tx = 1:numTx
         for rx = 1:numRx
-            % 获取当前发射 - 接收天线对的导频信号
-            pilotRxSignal = rxPilotSignal(:,:,tx,rx);
-            pilotRefSignal = refPilotSignal(:, :, tx);
-            H_ls = pilotRxSignal ./ pilotRefSignal; 
-            % 导频平均
-            H_avg = pilotAveraging(H_ls, CEC.freqWindow, CEC.timeWindow);
-            % 信道插值
-            [X, Y] = meshgrid(1:numSym, dataIndices);
-            [Xp, Yp] = meshgrid(1:numSym,squeeze(pilotIndices(:,1,tx)));
-            H_est(:, :, tx, rx)  = griddata(Xp, Yp, H_avg, X, Y);
+            for sym=1:numSym
+                % 获取当前发射 - 接收天线对的导频信号
+                pilotRxSignal = rxPilotSignal(:,sym,tx,rx);
+                pilotRefSignal = refPilotSignal(:, sym, tx);
+                H_ls = pilotRxSignal ./ pilotRefSignal; 
+                H_est(:, sym, tx, rx)  = interp1(pilotIndices(:,sym,tx), H_ls, dataIndices, 'linear', 'extrap');
+            end
         end
     end
 end

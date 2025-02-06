@@ -11,7 +11,7 @@ numStream = 2;                                            % 数据流个数
 cpLength = 16;                                            % 循环前缀长度
 
 % 调制参数配置
-M = 2;                                                    % QPSK 调制（M=2）
+M = 4;                                                    % QPSK 调制（M=2）
 
 % 信道模型配置
 sampleRate = 15.36e6;                                     % 采样率
@@ -77,24 +77,11 @@ mimoChannel = comm.MIMOChannel(...
     'Seed', 10086, ... % 固定随机种子
     'PathGainsOutputPort', true);   % 开启路径增益输出
 
-% 简单信道
-% mimoChannel = comm.MIMOChannel(...
-%     'SampleRate', sampleRate, ...
-%     'SpatialCorrelationSpecification', 'None',...
-%     'NumTransmitAntennas', numTx, ...
-%     'NumReceiveAntennas', numRx, ...
-%     'FadingDistribution', 'Rayleigh', ...
-%     'RandomStream', 'mt19937ar with seed', ...
-%     'Seed', 123, ... % 固定随机种子
-%     'PathGainsOutputPort', true);   % 开启路径增益输出
-
-% 评价体系
-errorRate = comm.ErrorRate;
 
 %% 数据集采集
 numFrame = 2;
-datasetPath = {'../raw/datasetDemo.mat'};
-datasetConfig = [1];
+datasetPath = {'../raw/trainData.mat','../raw/valData.mat'};
+datasetConfig = [2000,500];
 
 
 for datasetIdx = 1:length(datasetPath)

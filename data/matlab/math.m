@@ -1,8 +1,3 @@
-% matlab 列存储优先
-A = [1, 3, 5; 
-     2, 4, 6];
-disp(A(:)) 
-[H_est,nVar] = nrChannelEstimate(carrier,rxGrid,refInd,refSym,'CDMLengths',cdmLen);
-channelEstimate
-nrChannelEstimateo
-helpChannelEstimate
+test = reshape(1:(2*3*4*5), [2, 3, 4, 5]);
+disp(size([unique(test);1]))
+[unique(test);1]
