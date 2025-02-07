@@ -31,7 +31,6 @@ pilotIndicesAnt2(end) = pilotIndicesAnt1(end)-1;
 pilotIndicesAnt1 = pilotIndicesAnt1(pilotIndicesAnt1~=numSubc/2+1);                         % DC子载波不允许设为导频，因此去除
 pilotIndicesAnt2 = pilotIndicesAnt2(pilotIndicesAnt1~=numSubc/2+1);                         % DC子载波不允许设为导频，因此去除
 
-[pilotIndicesAnt1, pilotIndicesAnt2];
 
 % 构造 PilotCarrierIndices (3D 矩阵, NPilot-by-NSym-by-NT)
 pilotIndices = zeros(numPilot, numSym, numTx);
@@ -43,6 +42,9 @@ dataIndices = setdiff((numGuardBands(1)+1):(numSubc-numGuardBands(2)),[unique(pi
 numDataSubc = length(dataIndices);
 numFrameSymbols = numDataSubc * numSym * numTx;
 
+% 已知 validSubcIndices 与 dataIndices（均为原始FFT子载波编号）
+% 求 dataIndices 在 validSubcIndices 中的相对位置
+[~, valid2DataIndices] = ismember(dataIndices, validSubcIndices);
 
 % OFDM解调器
 ofdmDemod = comm.OFDMDemodulator('FFTLength', numSubc, ...

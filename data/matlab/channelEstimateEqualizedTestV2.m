@@ -4,7 +4,7 @@ clc;
 miPyPath = 'C:\Users\stone\AppData\Local\Programs\Python\Python312\python.exe';
 lenPyPath = 'D:\Python\python.exe';
 pyenv('Version', lenPyPath)
-% csiModel = py.csiFormer.load_model();
+csiFormerModel = py.csiFormer.load_model();
 % ceeqModel = py.ceeqFormer.load_model();
 eqDnnModel = py.eqDnn.load_model();
 ceDnnModel = py.ceDnn.load_model();
@@ -15,11 +15,10 @@ function [csi_est] = csiInfer(model, csi_ls, pre_csi)
     
     % 拼接实部和虚部，得到新的维度 [orig_shape, 2]
     csi_ls_cat = cat(ndims(csi_ls)+1, real(csi_ls), imag(csi_ls));
-    pre_csi_cat = cat(ndims(pre_csi)+1, real(pre_csi), imag(pre_csi));
     
     % 转换为 Python numpy 数组
     csi_ls_py = py.numpy.array(csi_ls_cat);
-    pre_csi_py = py.numpy.array(pre_csi_cat);
+    pre_csi_py = py.numpy.array(pre_csi);
     
     % 调用 Python 端的推断函数
     csi_est_py = py.csiFormer.infer(model, csi_ls_py, pre_csi_py);
@@ -27,8 +26,10 @@ function [csi_est] = csiInfer(model, csi_ls, pre_csi)
     % 将 Python numpy 输出转换为 MATLAB 数组
     csi_est = double(py.array.array('d', py.numpy.nditer(csi_est_py)));
     
-    % 根据原始尺寸（拼接后应为 [orig_shape, 2]）重构 csi_est 的 shape
+    % 重构为与拼接后输入相同的 shape: [orig_shape, 2]
     csi_est = reshape(csi_est, [orig_shape, 2]);
+
+    csi_est = complex(csi_est(:,:,:,:,1), csi_est(:,:,:,:,2));
 end
 
 function [csi_est] = ceInfer(model, csi_ls)
@@ -80,23 +81,23 @@ end
 
 %% 参数设置
 % 系统参数配置
-numSubc = 256;                                            % FFT 长度
-numGuardBands = [16;15];                                  % 左右保护带
-numPilot = (numSubc-sum(numGuardBands)-1)/4;              % 每根天线的导频子载波
-numTx = 2;                                                % 发射天线数量
-numRx = 2;                                                % 接收天线数量
-numSym = 14;                                              % 每帧 OFDM 符号数
-numStream = 2;                                            % 数据流个数
-cpLength = numSubc/4;                                            % 循环前缀长度
+numSubc = 256;                                                                           % FFT 长度
+numGuardBands = [16;15];                                                                 % 左右保护带
+numPilot = (numSubc-sum(numGuardBands)-1)/4;                                             % 每根天线的导频子载波
+numTx = 2;                                                                               % 发射天线数量
+numRx = 2;                                                                               % 接收天线数量
+numSym = 14;                                                                             % 每帧 OFDM 符号数
+numStream = 2;                                                                           % 数据流个数
+cpLength = numSubc/4;                                                                    % 循环前缀长度
 
 % 调制参数配置
-M = 4;                                                    % QPSK 调制（M=4）
+M = 4;                                                                                   % QPSK 调制（M=4）
 
 % 信道模型配置
-sampleRate = 16e6;                                        % 采样率
-pathDelays = [0, 30, 70, 90, 110, 190, 410] * 1e-9;       % 路径时延
+sampleRate = 15.36e6;                                                                     % 采样率
+pathDelays = [0, 30, 70, 90, 110, 190, 410] * 1e-9;                                       % 路径时延
 averagePathGains = [0, -1.0, -2.0, -3.0, -8.0, -17.2, -20.8];                             % 平均路径增益
-maxDopplerShift = 5.5;                                    % 最大多普勒频移
+maxDopplerShift = 5.5;                                                                    % 最大多普勒频移
 
 % 信号导频分布配置
 validSubcIndices = setdiff((numGuardBands(1)+1):(numSubc-numGuardBands(2)), numSubc/2+1);
@@ -108,6 +109,7 @@ pilotIndicesAnt2 = (numGuardBands(1)+2:4:numSubc-numGuardBands(2))';            
 pilotIndicesAnt2(end) = pilotIndicesAnt1(end)-1;
 pilotIndicesAnt1 = pilotIndicesAnt1(pilotIndicesAnt1~=numSubc/2+1);                         % DC子载波不允许设为导频，因此去除
 pilotIndicesAnt2 = pilotIndicesAnt2(pilotIndicesAnt1~=numSubc/2+1);                         % DC子载波不允许设为导频，因此去除
+
 
 % 构造 PilotCarrierIndices (3D 矩阵, NPilot-by-NSym-by-NT)
 pilotIndices = zeros(numPilot, numSym, numTx);
@@ -132,7 +134,7 @@ ofdmDemod = comm.OFDMDemodulator('FFTLength', numSubc, ...
                                   'PilotCarrierIndices', pilotIndices, ...
                                   'CyclicPrefixLength', cpLength, ...
                                   'NumReceiveAntennas', numRx);
-% OFDM调制器 
+% OFDM调制器 两种方式均可
 ofdmMod = comm.OFDMModulator('FFTLength', numSubc, ...
                              'NumGuardBandCarriers', numGuardBands, ...
                              'InsertDCNull', true,...
@@ -141,6 +143,7 @@ ofdmMod = comm.OFDMModulator('FFTLength', numSubc, ...
                              'PilotCarrierIndices', pilotIndices, ...
                              'CyclicPrefixLength', cpLength, ...
                              'NumTransmitAntennas', numTx);
+
 
 % 信道模型
 mimoChannel = comm.MIMOChannel(...
@@ -153,6 +156,10 @@ mimoChannel = comm.MIMOChannel(...
     'NumReceiveAntennas', numRx, ...
     'FadingDistribution', 'Rayleigh', ...
     'PathGainsOutputPort', true);   % 开启路径增益输出
+
+mimoChannelInfo = info(mimoChannel);
+pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
+toffset = mimoChannelInfo.ChannelFilterDelay;
 
 %% 评价体系
 snrValues = 0:5:30;
@@ -183,14 +190,12 @@ csiLossPerfectLMMSE = zeros(length(snrValues), 1);
 csiLossAI = zeros(length(snrValues), 1);
 
 % 每个SNR统计子帧的数量
-numCountFrame = 200;                                        
+numCountFrame = 30;                                        
 csiPreTemp = zeros(3, numValidSubc, numSym, numTx, numRx);
 
 for idx = 1:length(snrValues)
     snr = snrValues(idx);
-    % 重置工具对象
-    reset(mimoChannel)
-    
+    % 重置工具对象    
     reset(errorRatePerfectLS);
     reset(errorRatePerfectMMSE);
     reset(errorRateLSZF);
@@ -221,10 +226,7 @@ for idx = 1:length(snrValues)
         % OFDM 调制
         txSignal = ofdmMod(dataSignal, pilotSignal);
         % 通过信道模型获取接收信号和路径增益[总样本数, N_path, numTransmitAntennas, numReceiveAntennas]
-        [airSignal, pathGains] = mimoChannel(txSignal);
-        mimoChannelInfo = info(mimoChannel);
-        pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
-        toffset = mimoChannelInfo.ChannelFilterDelay;        
+        [airSignal, pathGains] = mimoChannel(txSignal);    
         % 去滤波器时延
         airSignal = [airSignal((toffset+1):end,:); zeros(toffset,2)];
         % 噪声
@@ -233,9 +235,8 @@ for idx = 1:length(snrValues)
         [rxDataSignal, rxPilotSignal] = ofdmDemod(airSignal);
 
         % 完美CSI矩阵Nsc x Nsym x Nt x Nr
-        hAll = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, 1:numSubc, toffset);
-        hValid = hAll(validSubcIndices,:,:,:);
-        hPerfect = hAll(dataIndices,:,:,:);
+        hValid = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, validSubcIndices, toffset);
+        hPerfect = hValid(valid2DataIndices,:,:,:);
 
         csiPreTemp(1,:,:,:,:,:) = csiPreTemp(2,:,:,:,:,:);
         csiPreTemp(2,:,:,:,:,:) = csiPreTemp(3,:,:,:,:,:);
@@ -269,9 +270,11 @@ for idx = 1:length(snrValues)
                 csi_ls(pilotIndices(:,1,tx),:,tx,rx) = rxPilotSignal(:,:,tx,rx) ./ pilotSignal(:, :, tx);
             end
         end
-        % csi_ai = csiInfer(csiModel,csi_ls(validSubcIndices,:,:,:), csiPreTemp(1:2,:,:,:,:));
-        csi_ai = ceInfer(ceDnnModel, csi_ls(validSubcIndices,:,:,:));
-        csi_ai = csi_ai(valid2DataIndices,:,:,:);
+
+        % csi_ai = csiInfer(csiFormerModel,csi_ls(validSubcIndices,:,:,:), csiPreTemp(1:2,:,:,:,:,:));
+
+        csi_ai_valid = ceInfer(ceDnnModel, csi_ls(validSubcIndices,:,:,:));
+        csi_ai = csi_ai_valid(valid2DataIndices,:,:,:);
         csiEst_LOSS_AI = csiEst_LOSS_AI + mean(abs(hPerfect(:) - csi_ai(:)).^2);
 
         % AI信道估计 ZF均衡
@@ -283,7 +286,7 @@ for idx = 1:length(snrValues)
         
         %% AI联合信道估计与均衡
         % eqAISignal = ceeqInfer(ceeqModel, csi_ls(validSubcIndices,:,:,:), csiPreTemp(1:2,:,:,:,:), finalSignal(validSubcIndices,:,:));
-        eqAISignal = eqInfer(eqDnnModel, hValid, finalSignal(validSubcIndices,:,:));
+        eqAISignal = eqInfer(eqDnnModel, csi_ai_valid, finalSignal(validSubcIndices,:,:));
         eqAISignal = eqAISignal(valid2DataIndices,:,:);
         eqAISignal = reshape(eqAISignal, [], 1);
         rxSymAIEQ = pskdemod(eqAISignal, M);

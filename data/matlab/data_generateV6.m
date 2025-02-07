@@ -5,7 +5,7 @@ clc;
 % 系统参数配置
 numSubc = 256;                                            % FFT 长度
 numGuardBands = [16;15];                                  % 左右保护带
-numPilot = (numSubc-sum(numGuardBands)-1)/4;            % 每根天线的导频子载波
+numPilot = (numSubc-sum(numGuardBands)-1)/4;              % 每根天线的导频子载波
 numTx = 2;                                                % 发射天线数量
 numRx = 2;                                                % 接收天线数量
 numSym = 14;                                              % 每帧 OFDM 符号数
@@ -13,10 +13,10 @@ numStream = 2;                                            % 数据流个数
 cpLength = numSubc/4;                                            % 循环前缀长度
 
 % 调制参数配置
-M = 2;                                                    % QPSK 调制（M=4）
+M = 4;                                                    % QPSK 调制（M=4）
 
 % 信道模型配置
-sampleRate = 16e6;                                        % 采样率
+sampleRate = 15.36e6;                                        % 采样率
 pathDelays = [0, 30, 70, 90, 110, 190, 410] * 1e-9;       % 路径时延
 averagePathGains = [0, -1.0, -2.0, -3.0, -8.0, -17.2, -20.8];                             % 平均路径增益
 maxDopplerShift = 5.5;                                    % 最大多普勒频移
@@ -31,8 +31,6 @@ pilotIndicesAnt2 = (numGuardBands(1)+2:4:numSubc-numGuardBands(2))';            
 pilotIndicesAnt2(end) = pilotIndicesAnt1(end)-1;
 pilotIndicesAnt1 = pilotIndicesAnt1(pilotIndicesAnt1~=numSubc/2+1);                         % DC子载波不允许设为导频，因此去除
 pilotIndicesAnt2 = pilotIndicesAnt2(pilotIndicesAnt1~=numSubc/2+1);                         % DC子载波不允许设为导频，因此去除
-
-[pilotIndicesAnt1, pilotIndicesAnt2];
 
 % 构造 PilotCarrierIndices (3D 矩阵, NPilot-by-NSym-by-NT)
 pilotIndices = zeros(numPilot, numSym, numTx);
@@ -64,16 +62,16 @@ ofdmMod = comm.OFDMModulator('FFTLength', numSubc, ...
                              'NumTransmitAntennas', numTx);
 
 
-
 %% 数据集采集
 numFrame = 2;
 snrValues = 15:5:25;
-datasetPath = {'../raw/ceeqTrainData.mat','../raw/ceeqValData.mat'};
-datasetConfig = [4000,500];
+datasetPath = {'../raw/trainDataM4.mat','../raw/valDataM4.mat'};
+datasetConfig = [10000,1000];
 
 
 error = zeros(length(snrValues),3);
 for datasetIdx = 1:length(datasetPath)
+    
     snrDatasetSize = datasetConfig(datasetIdx);
     datasetCapacity = snrDatasetSize * length(snrValues);
     
@@ -85,6 +83,7 @@ for datasetIdx = 1:length(datasetPath)
     
     csiPreTemp = zeros(numFrame+1, numValidSubc, numSym, numTx, numRx, 2);
     for snrIdx = 1:length(snrValues)
+        snrIdx
         snr = snrValues(snrIdx);
         % 信道模型
         mimoChannel = comm.MIMOChannel(...
@@ -97,7 +96,9 @@ for datasetIdx = 1:length(datasetPath)
             'NumReceiveAntennas', numRx, ...
             'FadingDistribution', 'Rayleigh', ...
             'PathGainsOutputPort', true);   % 开启路径增益输出
-
+        mimoChannelInfo = info(mimoChannel);
+        pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
+        toffset = mimoChannelInfo.ChannelFilterDelay;        
         for frame = -1:snrDatasetSize
             % 数据符号生成
             txSymStream = randi([0 M-1], numFrameSymbols, 1); 
@@ -115,9 +116,6 @@ for datasetIdx = 1:length(datasetPath)
             txSignal = ofdmMod(dataSignal, pilotSignal);
             % 通过信道模型获取接收信号和路径增益[总样本数, N_path, numTransmitAntennas, numReceiveAntennas]
             [airSignal, pathGains] = mimoChannel(txSignal);
-            mimoChannelInfo = info(mimoChannel);
-            pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
-            toffset = mimoChannelInfo.ChannelFilterDelay;        
             % 去滤波器时延
             airSignal = [airSignal((toffset+1):end,:); zeros(toffset,2)];
             % 噪声
