@@ -1,8 +1,6 @@
 clear;
 clc;
 
-
-
 %% 参数设置
 % 系统参数配置
 numSubc = 256;                                            % FFT 长度
@@ -15,20 +13,13 @@ numStream = 2;                                            % 数据流个数
 cpLength = numSubc/4;                                            % 循环前缀长度
 
 % 调制参数配置
-M = 4;                                                    % QPSK 调制（M=4）
+M = 2;                                                    % QPSK 调制（M=4）
 
 % 信道模型配置
 sampleRate = 16e6;                                        % 采样率
 pathDelays = [0, 30, 70, 90, 110, 190, 410] * 1e-9;       % 路径时延
 averagePathGains = [0, -1.0, -2.0, -3.0, -8.0, -17.2, -20.8];                             % 平均路径增益
 maxDopplerShift = 5.5;                                    % 最大多普勒频移
-
-% 信道估计配置
-CEC.pilotAverage = 'UserDefined';
-CEC.freqWindow = 3;
-CEC.timeWindow = 3;
-CEC.interpType = 'linear';
-CEC.algorithm = 'ls';
 
 % 信号导频分布配置
 validSubcIndices = setdiff((numGuardBands(1)+1):(numSubc-numGuardBands(2)), numSubc/2+1);
@@ -53,7 +44,6 @@ dataIndices = setdiff((numGuardBands(1)+1):(numSubc-numGuardBands(2)),[unique(pi
 numDataSubc = length(dataIndices);
 numFrameSymbols = numDataSubc * numSym * numTx;
 
-
 % OFDM解调器
 ofdmDemod = comm.OFDMDemodulator('FFTLength', numSubc, ...
                                   'NumGuardBandCarriers', numGuardBands, ...
@@ -73,30 +63,20 @@ ofdmMod = comm.OFDMModulator('FFTLength', numSubc, ...
                              'CyclicPrefixLength', cpLength, ...
                              'NumTransmitAntennas', numTx);
 
-% 信道模型
-mimoChannel = comm.MIMOChannel(...
-    'SampleRate', sampleRate, ...
-    'SpatialCorrelationSpecification', 'None',...
-    'PathDelays', pathDelays, ...
-    'AveragePathGains', averagePathGains, ...
-    'MaximumDopplerShift', maxDopplerShift, ...
-    'NumTransmitAntennas', numTx, ...
-    'NumReceiveAntennas', numRx, ...
-    'FadingDistribution', 'Rayleigh', ...
-    'RandomStream', 'mt19937ar with seed', ...
-    'Seed', 123, ... % 固定随机种子
-    'PathGainsOutputPort', true);   % 开启路径增益输出
+
 
 %% 数据集采集
 numFrame = 2;
-snrValues = 15:5:30;
-datasetPath = {'../raw/eqTrainData.mat','../raw/eqValData.mat'};
-datasetConfig = [1000,500];
+snrValues = 15:5:25;
+datasetPath = {'../raw/ceeqTrainData.mat','../raw/ceeqValData.mat'};
+datasetConfig = [4000,500];
 
+
+error = zeros(length(snrValues),3);
 for datasetIdx = 1:length(datasetPath)
     snrDatasetSize = datasetConfig(datasetIdx);
     datasetCapacity = snrDatasetSize * length(snrValues);
-
+    
     txSignalData = zeros(datasetCapacity, numValidSubc, numSym, numTx, 2);
     rxSignalData = zeros(datasetCapacity, numValidSubc, numSym, numRx, 2);
     csiLSData = zeros(datasetCapacity, numValidSubc, numSym, numTx, numRx, 2);
@@ -105,9 +85,19 @@ for datasetIdx = 1:length(datasetPath)
     
     csiPreTemp = zeros(numFrame+1, numValidSubc, numSym, numTx, numRx, 2);
     for snrIdx = 1:length(snrValues)
-        snrIdx
         snr = snrValues(snrIdx);
-        reset(mimoChannel);
+        % 信道模型
+        mimoChannel = comm.MIMOChannel(...
+            'SampleRate', sampleRate, ...
+            'SpatialCorrelationSpecification', 'None',...
+            'PathDelays', pathDelays, ...
+            'AveragePathGains', averagePathGains, ...
+            'MaximumDopplerShift', maxDopplerShift, ...
+            'NumTransmitAntennas', numTx, ...
+            'NumReceiveAntennas', numRx, ...
+            'FadingDistribution', 'Rayleigh', ...
+            'PathGainsOutputPort', true);   % 开启路径增益输出
+
         for frame = -1:snrDatasetSize
             % 数据符号生成
             txSymStream = randi([0 M-1], numFrameSymbols, 1); 
@@ -164,10 +154,10 @@ for datasetIdx = 1:length(datasetPath)
             
             %% 数据保存
             dataIdx = snrDatasetSize * (snrIdx-1) + frame;
-    
+
             % csi_pre
             csiPreData(dataIdx,:,:,:,:,:,:) = csiPreTemp(1:2,:,:,:,:,:);
-            % csi
+            % csi_label
             csiLabelData(dataIdx,:,:,:,:,:) = csiPreTemp(3,:,:,:,:,:);
             % csi_ls
             csiLSData(dataIdx,:,:,:,:,1) = real(csiLS(validSubcIndices,:,:,:));
@@ -180,7 +170,8 @@ for datasetIdx = 1:length(datasetPath)
             rxSignalData(dataIdx,:,:,:,2) = imag(finalSignal(validSubcIndices, :, :));
             
         end
-    end    
+
+    end  
     disp('save data ...')
     % 保存批量数据到文件
     save(datasetPath{datasetIdx}, ...

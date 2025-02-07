@@ -52,7 +52,7 @@ class DNNResEQ(nn.Module):
         x = self.input_layer(x)
         x = self.res_blocks(x)
         x = self.output_layer(x)
-        x = x.reshape(*x.shape[:3],-1,2)
+        x = x.reshape(*x.shape[:3],2,2)
         return x
 
 def load_model():
@@ -64,14 +64,10 @@ def load_model():
     return model
 
 
-def infer(model, csi, rx_signal, tx_signal):
+def infer(model, csi, rx_signal):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     csi = torch.unsqueeze(torch.tensor(csi, dtype=torch.float32).to(device),0).contiguous()
     rx_signal = torch.unsqueeze(torch.tensor(rx_signal, dtype=torch.float32).to(device),0).contiguous()
-    tx_signal = torch.unsqueeze(torch.tensor(tx_signal, dtype=torch.float32).to(device),0).contiguous()
-    print(csi.shape)
-    print(rx_signal.shape)
-    print(tx_signal.shape)
     model.eval()
     with torch.no_grad():
         equalized_signal = model(csi, rx_signal)
