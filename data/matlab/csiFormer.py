@@ -12,48 +12,11 @@ import torch.optim as optim
 import math
 import gc
 
-
-# ##### 数据集预处理
-
-class CSIFormerDataset(Dataset):
-    
-    def __init__(self, csi_ls, csi_pre, csi_label):
-        """
-        初始化数据集
-        :param csi_ls: 导频CSI矩阵  [data_size, n_subc, n_sym, n_tx, n_rx, 2]
-        :param csi: CSI矩阵 [data_size, n_subc, n_sym, n_tx, n_rx, 2]
-        :param csi_pre: 历史CSI矩阵 [data_size, n_frame, n_subc, n_sym, n_tx, n_rx, 2]
-        """
-        self.csi_ls = csi_ls
-        self.csi_pre = csi_pre
-        self.csi_label = csi_label
-
-    def __len__(self):
-        """返回数据集大小"""
-        return self.csi_label.size(0)
-
-    def __getitem__(self, idx):
-        """
-        返回单个样本
-        :param idx: 样本索引
-        :return: 发射导频、接收导频、CSI矩阵
-        """
-        return self.csi_ls[idx], self.csi_pre[idx], self.csi_label[idx]
-
-def dataset_preprocess(data):
-    # 将数据转换为PyTorch张量
-    csi_ls = torch.tensor(data['csiLSData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
-    csi_pre = torch.tensor(data['csiPreData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
-    csi_label = torch.tensor(data['csiLabelData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
-    del data
-    gc.collect()
-    return CSIFormerDataset(csi_ls, csi_pre, csi_label)
-
 ###############################################################################
 # 正弦/余弦位置编码
 ###############################################################################
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000):
+    def __init__(self, d_model, max_len=7000):
         """
         :param d_model: 嵌入特征的维度
         :param max_len: 序列的最大长度
@@ -80,7 +43,7 @@ class PositionalEncoding(nn.Module):
 # 第一部分：CSIFormer (编码器)
 ###############################################################################
 class CSIEncoder(nn.Module):
-    def __init__(self, d_model=256, nhead=8, n_layers=6, n_tx=2, n_rx=2, max_len=5000):
+    def __init__(self, d_model=256, nhead=4, n_layers=4, n_tx=2, n_rx=2, max_len=7000):
         """
         编码器模块
         :param d_model: Transformer 嵌入维度
@@ -106,7 +69,7 @@ class CSIEncoder(nn.Module):
             nn.TransformerEncoderLayer(
                 d_model=d_model,
                 nhead=nhead,
-                dim_feedforward=2048,
+                dim_feedforward=1024,
                 batch_first=True
             ),
             num_layers=n_layers
@@ -137,7 +100,7 @@ class CSIEncoder(nn.Module):
 # 第二部分：EnhancedCSIDecoder (解码器)
 ###############################################################################
 class EnhancedCSIDecoder(nn.Module):
-    def __init__(self, d_model=256, nhead=8, n_layers=6, n_tx=2, n_rx=2, max_len=5000):
+    def __init__(self, d_model=256, nhead=4, n_layers=4, n_tx=2, n_rx=2, max_len=7000):
         """
         :param d_model: Decoder 嵌入维度
         :param nhead: 注意力头数
@@ -156,7 +119,7 @@ class EnhancedCSIDecoder(nn.Module):
             nn.TransformerDecoderLayer(
                 d_model=d_model, 
                 nhead=nhead,
-                dim_feedforward=2048,
+                dim_feedforward=1024,
                 batch_first=True
             ),
             num_layers=n_layers
@@ -209,8 +172,8 @@ class EnhancedCSIDecoder(nn.Module):
 class CSIFormer(nn.Module):
     def __init__(self, 
                  d_model=256, 
-                 nhead=8, 
-                 n_layers=6, 
+                 nhead=4, 
+                 n_layers=4, 
                  n_tx=2, 
                  n_rx=2):
         """
@@ -239,49 +202,15 @@ class CSIFormer(nn.Module):
         # (2) 解码器：结合前 n 帧的 CSI 与 csi_enc，输出增强后的 CSI
         csi_dec = self.decoder(csi_enc, previous_csi)  # [B, n_subc, n_sym, n_tx, n_rx, 2]
         return csi_dec
-    
-class ComplexMSELoss(nn.Module):
-    def __init__(self):
-        """
-        :param alpha: 第一部分损失的权重
-        :param beta:  第二部分损失的权重
-        """
-        super(ComplexMSELoss, self).__init__()
 
-
-    def forward(self, csi_est, csi_label):
-        """
-        复数信道估计的均方误差 (MSE) 损失函数。
-        x_py: (batch_size, csi_matrix, 2)，估计值
-        y_py: (batch_size, csi_matrix, 2)，真实值
-        """
-        diff = csi_est - csi_label  # 差值，形状保持一致
-        loss = torch.mean(torch.square(torch.sqrt(torch.square(diff[...,0]) + torch.square(diff[...,1]))))
-
-        return loss
     
 def load_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = CSIFormer().to(device)
-    model.load_state_dict(torch.load(os.path.join('../../checkpoints', model.__class__.__name__ + '_ppro_best.pth'), map_location=device)['model_state_dict'])
-    print('load model path : ',os.path.join('../../checkpoints', model.__class__.__name__ + '_ppro_best.pth'))
+    model.load_state_dict(torch.load(os.path.join('../../checkpoints', model.__class__.__name__ + '_best.pth'), map_location=device)['model_state_dict'])
+    print('load model path : ',os.path.join('../../checkpoints', model.__class__.__name__ + '_best.pth'))
     return model
 
-def test(index,a,b,c,model,device):
-    data = hdf5storage.loadmat('../raw/valData.mat')
-    csi_ls = torch.tensor(data['csiLSData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
-    csi_pre = torch.tensor(data['csiPreData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
-    csi_label = torch.tensor(data['csiLabelData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
-    print('ceshi')
-
-    index = 0
-    csi_ls_i = torch.unsqueeze(csi_ls[index].to(device),0).contiguous()
-    pre_csi_i = torch.unsqueeze(csi_pre[index].to(device),0).contiguous()
-    csi_label_i = torch.unsqueeze(csi_label[index].to(device),0).contiguous()
-
-    print(torch.allclose(csi_ls_i, a))
-    print(torch.allclose(pre_csi_i, b))
-    print(torch.allclose(csi_label_i, c))
 
 def infer(model, csi_ls, pre_csi):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -292,37 +221,3 @@ def infer(model, csi_ls, pre_csi):
         csi_est = model(csi_ls ,pre_csi)
     return np.asfortranarray(torch.squeeze(csi_est).cpu().numpy())
 
-def infer2(model, csi_ls, pre_csi, label):
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    csi_ls = torch.unsqueeze(torch.tensor(csi_ls, dtype=torch.float32).to(device),0).contiguous()
-    pre_csi = torch.unsqueeze(torch.tensor(pre_csi, dtype=torch.float32).to(device),0).contiguous()
-    label = torch.unsqueeze(torch.tensor(label, dtype=torch.float64).to(device),0).contiguous()
-
-    # test(0,csi_ls, pre_csi, label, model, device)
-    model.eval()
-    with torch.no_grad():
-        csi_est = model(csi_ls ,pre_csi)
-    
-    c = ComplexMSELoss()
-    print(f'loss:{c(csi_est, label)}')
-    
-    x = csi_est[...,0] + 1j*csi_est[...,1]
-    y = label[...,0] + 1j*label[...,1]
-    print(f'loss:{torch.mean(torch.abs(x - y)**2)}')
-
-    diff = csi_est - label  # 差值，形状保持一致
-    loss = torch.mean(torch.square(torch.sqrt(torch.square(diff[...,0]) + torch.square(diff[...,1]))))
-    print(f'loss : {loss}')
-
-    return np.asfortranarray(torch.squeeze(csi_est).cpu().numpy())
-
-
-# data = hdf5storage.loadmat('./data/raw/valData.mat')
-# csi_ls = torch.tensor(data['csiLSData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
-# csi_pre = torch.tensor(data['csiPreData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
-# csi_label = torch.tensor(data['csiLabelData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
-# model = load_model()
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# csi_ls = torch.unsqueeze(csi_ls[1].to(device),0).contiguous()
-# pre_csi = torch.unsqueeze(pre_csi[1].to(device),0).contiguous()
