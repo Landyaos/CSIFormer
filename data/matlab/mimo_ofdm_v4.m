@@ -271,65 +271,62 @@ function hEst = mmseChannelEst(rxPilotSignal, refPilotSignal, dataIndices, pilot
 end
 
 
-function [out, csi] = myZFequalize(H, rxsignal)
-% myZFequalize 自定义零迫（ZF）均衡函数
-%
-% 输入：
-%   H: 信道矩阵，尺寸为 [nsc, nsym, ntx, nrx]
-%      - nsc: 子载波数量
-%      - nsym: OFDM 符号数量
-%      - ntx: 发射天线数
-%      - nrx: 接收天线数
-%
-%   rxsignal: 接收信号，尺寸为 [nsc, nsym, nrx]
-%
-% 输出：
-%   out: 均衡后估计的发送符号，尺寸为 [nsc, nsym, ntx]
-%   csi: 软信道状态信息，尺寸为 [nsc, nsym, ntx]
-%
-% 算法说明：
-% 对于每个子载波和每个 OFDM 符号，
-% 1. 从 H 中提取对应的信道矩阵，原始尺寸为 [ntx, nrx]，
-%    转置后变为 [nrx, ntx]，符合 y = H * x 的模型。
-% 2. 计算伪逆： x_hat = pinv(H_sub) * y
-% 3. 同时计算 CSI，例如取 (H_sub^H * H_sub) 的对角线并取倒数，
-%    作为各个发射分量的信道“质量”指标。
-
-% 获取各维度大小
-[nsc, nsym, ntx, nrx] = size(H);
-
-% 初始化输出变量
-out = zeros(nsc, nsym, ntx);
-csi = zeros(nsc, nsym, ntx);
-
-% 对每个子载波和每个 OFDM 符号进行循环
-for i = 1:nsc
-    for j = 1:nsym
-        % 提取当前子载波和符号的信道矩阵
-        % H(i,j,:,:) 的尺寸为 [ntx, nrx]
-        % 为了使其符合 y = H_sub * x 模型，将其转置为 [nrx, ntx]
-        H_sub = squeeze(H(i, j, :, :)).';  % 结果尺寸为 [nrx, ntx]
-        
-        % 提取当前子载波和符号的接收信号
-        % rxsignal(i,j,:) 的尺寸为 [nrx, 1]
-        y = squeeze(rxsignal(i, j, :));
-        
-        % 计算零迫均衡
-        % 若 H_sub 为满列秩，则 pinv(H_sub) = inv(H_sub' * H_sub) * H_sub'
-        x_hat = pinv(H_sub) * y;
-        out(i, j, :) = x_hat;
-        
-        % 计算 CSI 信息：
-        % 这里简单计算 H_sub^H * H_sub，然后取其对角线（每个发射分量的能量）
-        % 并取倒数，作为信道质量指标。注意防止除零错误。
-        Hhh = H_sub' * H_sub;    % 尺寸为 [ntx, ntx]
-        diag_val = diag(Hhh);     % 取对角线，得到 [ntx, 1] 向量
-        % 防止除数为 0
-        diag_val(diag_val < eps) = eps;
-        csi(i, j, :) = 1 ./ diag_val;
+function [eqSignal, csi] = myZFequalize(H, rxSignal)
+    % myZFequalize 自定义零迫（ZF）均衡函数
+    %
+    % 输入：
+    %   H: 信道矩阵，尺寸为 [nsc, nsym, ntx, nrx]
+    %      - nsc: 子载波数量
+    %      - nsym: OFDM 符号数量
+    %      - ntx: 发射天线数
+    %      - nrx: 接收天线数
+    %
+    %   rxSignal: 接收信号，尺寸为 [nsc, nsym, nrx]
+    %
+    % 输出：
+    %   eqSignal: 均衡后估计的发送符号，尺寸为 [nsc, nsym, ntx]
+    %   csi: 软信道状态信息，尺寸为 [nsc, nsym, ntx]
+    %
+    % 算法说明：
+    % 对于每个子载波和每个 OFDM 符号，
+    % 1. 从 H 中提取对应的信道矩阵，原始尺寸为 [ntx, nrx]，
+    %    转置后变为 [nrx, ntx]，符合 y = H * x 的模型。
+    % 2. 计算伪逆： x_hat = pinv(H_sub) * y
+    % 3. 同时计算 CSI，例如取 (H_sub^H * H_sub) 的对角线并取倒数，
+    %    作为各个发射分量的信道“质量”指标。
+    
+    % 获取各维度大小
+    [nsc, nsym, ntx, nrx] = size(H);
+    eqSignal = zeros(nsc, nsym, ntx);
+    csi = zeros(nsc, nsym, ntx);
+    for i = 1:nsc
+        for j = 1:nsym
+            % 提取当前子载波、符号的信道矩阵（原始尺寸 [ntx, nrx]）
+            H_ij = squeeze(H(i, j, :, :));
+            % 为符合 y = H_sub * x 模型，转置为 [nrx, ntx]
+            H_sub = H_ij.';  
+            % 提取接收信号
+            y = squeeze(rxSignal(i, j, :));
+            
+            % 计算ZF均衡矩阵：W_ZF = (H_sub^H * H_sub)^{-1} * H_sub^H
+            % 当 H_sub' * H_sub 存在奇异或病态问题时需加保护措施
+            temp = H_sub' * H_sub;
+            % 对角元素保护
+            diag_temp = diag(temp);
+            diag_temp(diag_temp < eps) = eps;
+            temp = temp - diag(diag(temp)) + diag(diag_temp);
+            
+            W_zf = inv(temp) * H_sub';
+            x_hat = W_zf * y;
+            eqSignal(i, j, :) = x_hat;
+            
+            % 计算 CSI，反映各发射分量的有效增益
+            Hhh = H_sub' * H_sub;
+            diagVal = diag(Hhh);
+            diagVal(diagVal < eps) = eps;
+            csi(i, j, :) = 1 ./ diagVal;
+        end
     end
-end
-
 end
 
 

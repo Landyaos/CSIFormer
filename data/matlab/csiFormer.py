@@ -203,12 +203,12 @@ class CSIFormer(nn.Module):
         csi_dec = self.decoder(csi_enc, previous_csi)  # [B, n_subc, n_sym, n_tx, n_rx, 2]
         return csi_dec
 
-    
+
 def load_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = CSIFormer().to(device)
-    model.load_state_dict(torch.load(os.path.join('../../checkpoints', model.__class__.__name__ + '_best.pth'), map_location=device)['model_state_dict'])
-    print('load model path : ',os.path.join('../../checkpoints', model.__class__.__name__ + '_best.pth'))
+    model.load_state_dict(torch.load(os.path.join('../../checkpoints', model.__class__.__name__ + '_v1_best.pth'), map_location=device)['model_state_dict'])
+    print('load model path : ',os.path.join('../../checkpoints', model.__class__.__name__ + '_v1_best.pth'))
     return model
 
 

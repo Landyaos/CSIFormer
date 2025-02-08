@@ -53,7 +53,7 @@ def dataset_preprocess(data):
 # 正弦/余弦位置编码
 ###############################################################################
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000):
+    def __init__(self, d_model, max_len=7000):
         """
         :param d_model: 嵌入特征的维度
         :param max_len: 序列的最大长度
@@ -80,7 +80,7 @@ class PositionalEncoding(nn.Module):
 # 第一部分：CSIFormer (编码器)
 ###############################################################################
 class CSIEncoder(nn.Module):
-    def __init__(self, d_model=256, nhead=8, n_layers=6, n_tx=2, n_rx=2, max_len=5000):
+    def __init__(self, d_model=256, nhead=4, n_layers=4, n_tx=2, n_rx=2, max_len=7000):
         """
         编码器模块
         :param d_model: Transformer 嵌入维度
@@ -106,7 +106,7 @@ class CSIEncoder(nn.Module):
             nn.TransformerEncoderLayer(
                 d_model=d_model,
                 nhead=nhead,
-                dim_feedforward=2048,
+                dim_feedforward=1024,
                 batch_first=True
             ),
             num_layers=n_layers
@@ -137,7 +137,7 @@ class CSIEncoder(nn.Module):
 # 第二部分：EnhancedCSIDecoder (解码器)
 ###############################################################################
 class EnhancedCSIDecoder(nn.Module):
-    def __init__(self, d_model=256, nhead=8, n_layers=6, n_tx=2, n_rx=2, max_len=5000):
+    def __init__(self, d_model=256, nhead=4, n_layers=4, n_tx=2, n_rx=2, max_len=7000):
         """
         :param d_model: Decoder 嵌入维度
         :param nhead: 注意力头数
@@ -156,7 +156,7 @@ class EnhancedCSIDecoder(nn.Module):
             nn.TransformerDecoderLayer(
                 d_model=d_model, 
                 nhead=nhead,
-                dim_feedforward=2048,
+                dim_feedforward=1024,
                 batch_first=True
             ),
             num_layers=n_layers
@@ -209,8 +209,8 @@ class EnhancedCSIDecoder(nn.Module):
 class CSIFormer(nn.Module):
     def __init__(self, 
                  d_model=256, 
-                 nhead=8, 
-                 n_layers=6, 
+                 nhead=4, 
+                 n_layers=4, 
                  n_tx=2, 
                  n_rx=2):
         """
@@ -240,24 +240,7 @@ class CSIFormer(nn.Module):
         csi_dec = self.decoder(csi_enc, previous_csi)  # [B, n_subc, n_sym, n_tx, n_rx, 2]
         return csi_dec
 
-class ComplexMSELoss(nn.Module):
-    def __init__(self):
-        """
-        :param alpha: 第一部分损失的权重
-        :param beta:  第二部分损失的权重
-        """
-        super(ComplexMSELoss, self).__init__()
 
-
-    def forward(self, csi_est, csi_label):
-        """
-        复数信道估计的均方误差 (MSE) 损失函数。
-        x_py: (batch_size, csi_matrix, 2)，估计值
-        y_py: (batch_size, csi_matrix, 2)，真实值
-        """
-        diff = csi_est - csi_label  # 差值，形状保持一致
-        loss = torch.mean(diff[..., 0]**2 + diff[..., 1]**2)  # 实部和虚部平方和
-        return loss
 
 # 模型训练
 def train_model(model, dataloader_train, dataloader_val, criterion, optimizer, scheduler, epochs, device, checkpoint_dir='./checkpoints'):
@@ -266,8 +249,8 @@ def train_model(model, dataloader_train, dataloader_val, criterion, optimizer, s
     start_epoch = 0
     model.to(device)
     # 查看是否有可用的最近 checkpoint
-    latest_path = os.path.join(checkpoint_dir, model.__class__.__name__ + '_pro_latest.pth')
-    best_path = os.path.join(checkpoint_dir, model.__class__.__name__ + '_pro_best.pth')
+    latest_path = os.path.join(checkpoint_dir, model.__class__.__name__ + '_v1_latest.pth')
+    best_path = os.path.join(checkpoint_dir, model.__class__.__name__ + '_v1_best.pth')
 
     if os.path.isfile(latest_path):
         print(f"[INFO] Resuming training from '{latest_path}'")
@@ -347,22 +330,31 @@ def train_model(model, dataloader_train, dataloader_val, criterion, optimizer, s
                 'best_loss': best_loss,
             }, best_path)
             print(f"[INFO] Best model saved at epoch {epoch + 1}, val_loss={val_loss:.4f}")
-        # 3) 每隔5个epoch保存当前epoch的权重
-        if (epoch+1) % 5 == 0:
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict() if scheduler is not None else None,
-                'best_loss': best_loss,
-            }, os.path.join(checkpoint_dir, model.__class__.__name__ + '_epoch_'+str(epoch)+'.pth'))
 
-model = CSIFormer()
+
+class ComplexMSELoss(nn.Module):
+    def __init__(self):
+        """
+        :param alpha: 第一部分损失的权重
+        :param beta:  第二部分损失的权重
+        """
+        super(ComplexMSELoss, self).__init__()
+
+
+    def forward(self, csi_est, csi_label):
+        """
+        复数信道估计的均方误差 (MSE) 损失函数。
+        x_py: (batch_size, csi_matrix, 2)，估计值
+        y_py: (batch_size, csi_matrix, 2)，真实值
+        """
+        diff = csi_est - csi_label  # 差值，形状保持一致
+        loss = torch.mean(torch.square(torch.sqrt(torch.square(diff[...,0]) + torch.square(diff[...,1]))))
+        return loss
+        
 # 计算参数量
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-print(f"Total trainable parameters: {count_parameters(model)}")
 
 print("load data")
 data_train = hdf5storage.loadmat('/root/autodl-tmp/data/raw/trainData.mat')
@@ -378,24 +370,22 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
 lr = 1e-3
 epochs = 20
-batch_size = 128
+batch_size = 36
 shuffle_flag = True
 model = CSIFormer()
+print(f"Total trainable parameters: {count_parameters(model)}")
+print('train model')
 dataset_train = dataset_preprocess(data_train)
 dataset_val = dataset_preprocess(data_val)
 criterion = ComplexMSELoss()
 optimizer = optim.Adam(model.parameters(), lr=lr)
-dataloader_train = DataLoader(dataset=dataset_train, batch_size=batch_size, shuffle=shuffle_flag)
-dataloader_val = DataLoader(dataset=dataset_val, batch_size=batch_size, shuffle=shuffle_flag)
+dataloader_train = DataLoader(dataset=dataset_train, batch_size=batch_size, shuffle=shuffle_flag, num_workers=4)
+dataloader_val = DataLoader(dataset=dataset_val, batch_size=batch_size, shuffle=shuffle_flag, num_workers=4)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1)
-# 计算参数量
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-print(f"Total trainable parameters: {count_parameters(model)}")
-print('train model')
 
-train_model(model, dataloader_train,dataloader_val, criterion, optimizer,scheduler, epochs, device, checkpoint_dir='')
+
+train_model(model, dataloader_train,dataloader_val, criterion, optimizer,scheduler, epochs, device, checkpoint_dir)
 
 
 

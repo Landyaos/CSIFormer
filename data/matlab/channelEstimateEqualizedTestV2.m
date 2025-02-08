@@ -5,6 +5,7 @@ miPyPath = 'C:\Users\stone\AppData\Local\Programs\Python\Python312\python.exe';
 lenPyPath = 'D:\Python\python.exe';
 pyenv('Version', lenPyPath)
 csiFormerModel = py.csiFormer.load_model();
+csiEncoderModel = py.csiEncoder.load_model();
 % ceeqModel = py.ceeqFormer.load_model();
 eqDnnModel = py.eqDnn.load_model();
 ceDnnModel = py.ceDnn.load_model();
@@ -32,9 +33,9 @@ function [csi_est] = csiInfer(model, csi_ls, pre_csi)
     csi_est = complex(csi_est(:,:,:,:,1), csi_est(:,:,:,:,2));
 end
 
-function [csi_est] = ceInfer(model, csi_ls)
+function [csi_est] = ceDnnInfer(model, csi_ls)
     % 保存原始 csi_ls 的尺寸
-    orig_shape = size(csi_ls);  % 例如: [52, 14, 2, 2]
+    orig_shape = size(csi_ls);  % [nsubc, nsym, ntx, nrx]
     
     % 拼接实部和虚部，新增加的最后一维为2：即 [orig_shape, 2]
     csi_ls_cat = cat(ndims(csi_ls)+1, real(csi_ls), imag(csi_ls));
@@ -67,16 +68,30 @@ end
 %     equalized_signal = complex(equalized_signal(:,:,:,1), equalized_signal(:,:,:,2));
 % end
 
-function [equalized_signal] = eqInfer(model, csi_est, rx_signal)
-    csi_est = py.numpy.array(cat(ndims(csi_est)+1, real(csi_est), imag(csi_est)));
-    rx_signal = py.numpy.array(cat(ndims(rx_signal)+1, real(rx_signal), imag(rx_signal)));
+function [equalized_signal] = eqDnnInfer(model, csi_est, rx_signal)
+    % 获取参数维度
+    [nsubc, nsym, ntx, nrx] = size(csi_ls);  % [nsubc, nsym, ntx, nrx]
     
-    equalized_signal = py.eqDnn.infer(model, csi_est, rx_signal);
-
-    % 转换 Python numpy 输出为 MATLAB 矩阵
-    equalized_signal = double(py.array.array('d', py.numpy.nditer(equalized_signal)));
-    equalized_signal = reshape(equalized_signal, 224,14,2,2);
-    equalized_signal = complex(equalized_signal(:,:,:,1), equalized_signal(:,:,:,2));
+    % 拼接 csi_est 的实部和虚部，在最后一维增加一个维度2
+    csi_est_cat = cat(ndims(csi_est)+1, real(csi_est), imag(csi_est));
+    % 同理，拼接 rx_signal 的实部和虚部
+    rx_signal_cat = cat(ndims(rx_signal)+1, real(rx_signal), imag(rx_signal));
+    
+    % 转换为 Python numpy 数组
+    csi_est_py = py.numpy.array(csi_est_cat);
+    rx_signal_py = py.numpy.array(rx_signal_cat);
+    
+    % 调用 Python 端的推断函数
+    eq_sigal_py = py.eqDnn.infer(model, csi_est_py, rx_signal_py);
+    
+    % 将 Python numpy 输出转换为 MATLAB 数组（此时数据为一维向量）
+    eq_sigal = double(py.array.array('d', py.numpy.nditer(eq_sigal_py)));
+    
+    % 重构为 [nsubc, nsym, ntx, 2]
+    eq_sigal = reshape(eq_sigal, [nsubc, nsym, ntx, 2]);
+    
+    % 合成复数矩阵：将最后一维中的第1和第2部分分别作为实部和虚部
+    equalized_signal = complex(eq_sigal(:,:,:,:,1), eq_sigal(:,:,:,:,2));
 end
 
 %% 参数设置
@@ -271,9 +286,9 @@ for idx = 1:length(snrValues)
             end
         end
 
-        % csi_ai = csiInfer(csiFormerModel,csi_ls(validSubcIndices,:,:,:), csiPreTemp(1:2,:,:,:,:,:));
+        csi_ai_valid = csiInfer(csiFormerModel,csi_ls(validSubcIndices,:,:,:), csiPreTemp(1:2,:,:,:,:,:));
 
-        csi_ai_valid = ceInfer(ceDnnModel, csi_ls(validSubcIndices,:,:,:));
+        % csi_ai_valid = ceInfer(ceDnnModel, csi_ls(validSubcIndices,:,:,:));
         csi_ai = csi_ai_valid(valid2DataIndices,:,:,:);
         csiEst_LOSS_AI = csiEst_LOSS_AI + mean(abs(hPerfect(:) - csi_ai(:)).^2);
 
@@ -286,7 +301,7 @@ for idx = 1:length(snrValues)
         
         %% AI联合信道估计与均衡
         % eqAISignal = ceeqInfer(ceeqModel, csi_ls(validSubcIndices,:,:,:), csiPreTemp(1:2,:,:,:,:), finalSignal(validSubcIndices,:,:));
-        eqAISignal = eqInfer(eqDnnModel, csi_ai_valid, finalSignal(validSubcIndices,:,:));
+        eqAISignal = eqDnnInfer(eqDnnModel, csi_ai_valid, finalSignal(validSubcIndices,:,:));
         eqAISignal = eqAISignal(valid2DataIndices,:,:);
         eqAISignal = reshape(eqAISignal, [], 1);
         rxSymAIEQ = pskdemod(eqAISignal, M);
