@@ -8,6 +8,7 @@ csiFormerModel = py.csiFormer.load_model();
 csiEncoderModel = py.csiEncoder.load_model();
 % ceeqModel = py.ceeqFormer.load_model();
 eqDnnModel = py.eqDnn.load_model();
+eqDnnProModel = py.eqDnnPro.load_model();
 ceDnnModel = py.ceDnn.load_model();
 
 function [csi_est] = csiEncoderInfer(model, csi_ls)
@@ -116,6 +117,33 @@ function [equalized_signal] = eqDnnInfer(model, csi_est, rx_signal)
     equalized_signal = complex(eq_sigal(:,:,:,1), eq_sigal(:,:,:,2));
 end
 
+function [equalized_signal] = eqDnnProInfer(model, csi_est, rx_signal)
+    % 获取参数维度
+    [nsubc, nsym, ntx, nrx] = size(csi_est);  % [nsubc, nsym, ntx, nrx]
+    
+    % 拼接 csi_est 的实部和虚部，在最后一维增加一个维度2
+    csi_est_cat = cat(ndims(csi_est)+1, real(csi_est), imag(csi_est));
+    % 同理，拼接 rx_signal 的实部和虚部
+    rx_signal_cat = cat(ndims(rx_signal)+1, real(rx_signal), imag(rx_signal));
+    
+    % 转换为 Python numpy 数组
+    csi_est_py = py.numpy.array(csi_est_cat);
+    rx_signal_py = py.numpy.array(rx_signal_cat);
+    
+    % 调用 Python 端的推断函数
+    eq_sigal_py = py.eqDnnPro.infer(model, csi_est_py, rx_signal_py);
+    
+    % 将 Python numpy 输出转换为 MATLAB 数组（此时数据为一维向量）
+    eq_sigal = double(py.array.array('d', py.numpy.nditer(eq_sigal_py)));
+    
+    % 重构为 [nsubc, nsym, ntx, 2]
+    eq_sigal = reshape(eq_sigal, [nsubc, nsym, ntx, 2]);
+    
+    % 合成复数矩阵：将最后一维中的第1和第2部分分别作为实部和虚部
+    equalized_signal = complex(eq_sigal(:,:,:,1), eq_sigal(:,:,:,2));
+end
+
+
 %% 参数设置
 % 系统参数配置
 numSubc = 256;                                                                           % FFT 长度
@@ -210,6 +238,7 @@ snrValues = 0:5:30;
 ser_ideal_zf = zeros(length(snrValues), 3);
 ser_ideal_mmse = zeros(length(snrValues), 3);
 ser_ideal_eqDnn = zeros(length(snrValues), 3);
+ser_ideal_eqDnnPro = zeros(length(snrValues), 3);
 ser_ls_zf = zeros(length(snrValues), 3);
 ser_ls_mmse = zeros(length(snrValues), 3);
 ser_mmse_zf = zeros(length(snrValues), 3);
@@ -328,11 +357,17 @@ for idx = 1:length(snrValues)
 
         
         %% 信道均衡
-        % AI 理想信道均衡
+        % AI eqDnn 理想信道均衡
         eqSignal_ideal_eqDnn = eqDnnInfer(eqDnnModel, hValid, finalSignal(validSubcIndices,:,:));
         eqSignal_ideal_eqDnn = eqSignal_ideal_eqDnn(valid2DataIndices,:,:);
         rxStream_ideal_eqDnn = pskdemod(reshape(eqSignal_ideal_eqDnn, [], 1), M);
         ser_ideal_eqDnn(idx, :) = er_ideal_eqDnn(txStream, rxStream_ideal_eqDnn);
+
+        % AI eqDnnPro 理想信道均衡 
+        eqSignal_ideal_eqDnnPro = eqDnnProInfer(eqDnnProModel, hValid, finalSignal(validSubcIndices,:,:));
+        eqSignal_ideal_eqDnnPro = eqSignal_ideal_eqDnnPro(valid2DataIndices,:,:);
+        rxStream_ideal_eqDnnPro = pskdemod(reshape(eqSignal_ideal_eqDnnPro, [], 1), M);
+        ser_ideal_eqDnnPro(idx, :) = er_ideal_eqDnn(txStream, rxStream_ideal_eqDnnPro);
         
         % AI csiEncoder ZF 信道均衡
         eqSignal_csiEncoder_ls = myZFequalize(csiEncoder_data, rxDataSignal);
@@ -399,13 +434,14 @@ colors = lines(11);
 % plot(snrValues, ser_ideal_zf(:,1),       '-o', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect ZF');
 plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
 plot(snrValues, ser_ideal_eqDnn(:,1),    '-d', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNN');
+plot(snrValues, ser_ideal_eqDnnPro(:,1),    '--v', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNNPro');
 % plot(snrValues, ser_ls_zf(:,1),          '-^', 'Color', colors(4,:),  'LineWidth', 1.5, 'DisplayName', 'LS ZF');
-plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(5,:),  'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
+% plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(5,:),  'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
 % plot(snrValues, ser_mmse_zf(:,1),        '-v', 'Color', colors(6,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE ZF');
-plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(7,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
-plot(snrValues, ser_csiEncoder_zf(:,1),  '-x', 'Color', colors(8,:),  'LineWidth', 1.5, 'DisplayName', 'AI csiEncoder ZF');
-plot(snrValues, ser_csiFormer_zf(:,1),   '--o', 'Color', colors(9,:),  'LineWidth', 1.5, 'DisplayName', 'AI csiFormer ZF');
-plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(10,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer MMSE');
+% plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(7,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
+% plot(snrValues, ser_csiEncoder_zf(:,1),  '-x', 'Color', colors(8,:),  'LineWidth', 1.5, 'DisplayName', 'AI csiEncoder ZF');
+% plot(snrValues, ser_csiFormer_zf(:,1),   '--o', 'Color', colors(9,:),  'LineWidth', 1.5, 'DisplayName', 'AI csiFormer ZF');
+% plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(10,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer MMSE');
 plot(snrValues, ser_csiFormer_eqDnn(:,1),'--d', 'Color', colors(11,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer EQDNN');
 
 grid on;

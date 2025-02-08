@@ -14,7 +14,6 @@ import gc
 
 
 # ##### 数据集预处理
-
 class CSIFormerDataset(Dataset):
     
     def __init__(self, csi_ls, csi_pre, csi_label):
@@ -206,7 +205,7 @@ class EnhancedCSIDecoder(nn.Module):
 ###############################################################################
 # CSIFormer：同时包含 Encoder 和 Decoder，批维在前
 ###############################################################################
-class CSIFormer(nn.Module):
+class CSIFormerLite(nn.Module):
     def __init__(self, 
                  d_model=256, 
                  nhead=4, 
@@ -221,7 +220,7 @@ class CSIFormer(nn.Module):
         :param n_tx, n_rx: 发射/接收天线数
         :param n_frame: 前 n 帧参考数
         """
-        super(CSIFormer, self).__init__()
+        super(CSIFormerLite, self).__init__()
         self.encoder = CSIEncoder(d_model, nhead, n_layers, n_rx, n_rx)
         self.decoder = EnhancedCSIDecoder(d_model, nhead, n_layers, n_tx, n_rx)
 
@@ -372,7 +371,7 @@ lr = 1e-3
 epochs = 20
 batch_size = 36
 shuffle_flag = True
-model = CSIFormer()
+model = CSIFormerLite()
 print(f"Total trainable parameters: {count_parameters(model)}")
 print('train model')
 dataset_train = dataset_preprocess(data_train)
@@ -382,6 +381,7 @@ optimizer = optim.Adam(model.parameters(), lr=lr)
 dataloader_train = DataLoader(dataset=dataset_train, batch_size=batch_size, shuffle=shuffle_flag, num_workers=4)
 dataloader_val = DataLoader(dataset=dataset_val, batch_size=batch_size, shuffle=shuffle_flag, num_workers=4)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1)
+
 
 
 train_model(model, dataloader_train,dataloader_val, criterion, optimizer,scheduler, epochs, device, checkpoint_dir)
