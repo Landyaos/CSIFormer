@@ -64,8 +64,8 @@ ofdmMod = comm.OFDMModulator('FFTLength', numSubc, ...
 
 %% 数据集采集
 numFrame = 2;
-snrValues = 15:10:35;
-datasetPath = {'../raw/trainDataV3.mat','../raw/valDataV3.mat'};
+snrValues = 15:5:25;
+datasetPath = {'../raw/trainDataM4.mat','../raw/valDataM4.mat'};
 datasetConfig = [10000,1000];
 
 
@@ -125,18 +125,11 @@ for datasetIdx = 1:length(datasetPath)
 
             % 完美CSI矩阵Nsc x Nsym x Nt x Nr
             h = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, validSubcIndices, toffset);
-            % 计算导频处信道估计
-            csiLS = zeros(numSubc, numSym, numTx, numRx);
-            for tx = 1:numTx
-                for rx = 1:numRx
-                    csiLS(pilotIndices(:,1,tx),:,tx,rx) = rxPilotSignal(:,:,tx,rx) ./ pilotSignal(:, :, tx);
-                end
-            end
-
+            
             csiPreTemp(1,:,:,:,:,:) = csiPreTemp(2,:,:,:,:,:);
             csiPreTemp(2,:,:,:,:,:) = csiPreTemp(3,:,:,:,:,:);
-            csiPreTemp(3,:,:,:,:,1) = real(csiLS(validSubcIndices,:,:,:));
-            csiPreTemp(3,:,:,:,:,2) = imag(csiLS(validSubcIndices,:,:,:));
+            csiPreTemp(3,:,:,:,:,1) = real(h);
+            csiPreTemp(3,:,:,:,:,2) = imag(h);
 
             if frame < 1
                 continue;
@@ -149,7 +142,13 @@ for datasetIdx = 1:length(datasetPath)
                     finalSignal(pilotIndices(:,1,tx),:,rx) = rxPilotSignal(:,:,tx,rx);
                 end
             end
-
+            % 计算导频处信道估计
+            csiLS = zeros(numSubc, numSym, numTx, numRx);
+            for tx = 1:numTx
+                for rx = 1:numRx
+                    csiLS(pilotIndices(:,1,tx),:,tx,rx) = rxPilotSignal(:,:,tx,rx) ./ pilotSignal(:, :, tx);
+                end
+            end
             
             %% 数据保存
             dataIdx = snrDatasetSize * (snrIdx-1) + frame;
@@ -157,8 +156,7 @@ for datasetIdx = 1:length(datasetPath)
             % csi_pre
             csiPreData(dataIdx,:,:,:,:,:,:) = csiPreTemp(1:2,:,:,:,:,:);
             % csi_label
-            csiLabelData(dataIdx,:,:,:,:,1) = real(h);
-            csiLabelData(dataIdx,:,:,:,:,2) = imag(h);
+            csiLabelData(dataIdx,:,:,:,:,:) = csiPreTemp(3,:,:,:,:,:);
             % csi_ls
             csiLSData(dataIdx,:,:,:,:,1) = real(csiLS(validSubcIndices,:,:,:));
             csiLSData(dataIdx,:,:,:,:,2) = imag(csiLS(validSubcIndices,:,:,:));

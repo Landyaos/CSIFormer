@@ -16,6 +16,9 @@ M = 4;                                                                          
 
 % 信道模型配置
 sampleRate = 15.36e6;                                                                     % 采样率
+t_rms = 2e-6/sqrt(2);                                                                    % 均方根时延
+power_r = 2;                                                                             % 导频功率
+delta_f = sampleRate/numSubc;                                                            % 子载波间隔
 pathDelays = [0, 30, 70, 90, 110, 190, 410] * 1e-9;                                       % 路径时延
 averagePathGains = [0, -1.0, -2.0, -3.0, -8.0, -17.2, -20.8];                             % 平均路径增益
 maxDopplerShift = 5.5;                                                                    % 最大多普勒频移
@@ -65,7 +68,12 @@ ofdmMod = comm.OFDMModulator('FFTLength', numSubc, ...
                              'CyclicPrefixLength', cpLength, ...
                              'NumTransmitAntennas', numTx);
 
-
+minSeed = 0;
+maxSeed = 2^32 - 1;   % 4294967295
+seed = randi([minSeed, maxSeed]);
+seed
+% 349727938 1.7875e+09 578683907 1.2870e+09 1.9602e+09 1.3634e+09 1.2585e+09 1.3596e+09 1.2299e+09
+% 1.4398e+09
 % 信道模型
 mimoChannel = comm.MIMOChannel(...
     'SampleRate', sampleRate, ...
@@ -76,7 +84,9 @@ mimoChannel = comm.MIMOChannel(...
     'NumTransmitAntennas', numTx, ...
     'NumReceiveAntennas', numRx, ...
     'FadingDistribution', 'Rayleigh', ...
-    'PathGainsOutputPort', true);   % 开启路径增益输出
+    'PathGainsOutputPort', true,...
+    'RandomStream', 'mt19937ar with seed', ...  % 使用固定种子的随机数流
+    'Seed', seed);   % 开启路径增益输出
 
 mimoChannelInfo = info(mimoChannel);
 pathFilters = mimoChannelInfo.ChannelFilterCoefficients;

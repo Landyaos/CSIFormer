@@ -224,7 +224,9 @@ mimoChannel = comm.MIMOChannel(...
     'NumTransmitAntennas', numTx, ...
     'NumReceiveAntennas', numRx, ...
     'FadingDistribution', 'Rayleigh', ...
-    'PathGainsOutputPort', true);   % 开启路径增益输出
+    'PathGainsOutputPort', true,...
+    'RandomStream', 'mt19937ar with seed', ...  % 使用固定种子的随机数流
+    'Seed', 349727938);   % 开启路径增益输出
 
 mimoChannelInfo = info(mimoChannel);
 pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
@@ -258,7 +260,7 @@ mse_csi_csiFormer = zeros(length(snrValues), 1);
 % TODO
 
 % 每个SNR统计子帧的数量
-numCountFrame = 30;                                        
+numCountFrame = 20;                                        
 csiPreTemp = zeros(3, numValidSubc, numSym, numTx, numRx);
 
 for idx = 1:length(snrValues)
@@ -303,10 +305,19 @@ for idx = 1:length(snrValues)
         % 完美信道估计
         hValid = ofdmChannelResponse(pathGains, pathFilters, numSubc, cpLength, validSubcIndices, toffset);
         hPerfect = hValid(valid2DataIndices,:,:,:);
+
+        % 计算导频处信道估计
+        csi_ls = zeros(numSubc, numSym, numTx, numRx);
+        for tx = 1:numTx
+            for rx = 1:numRx
+                csi_ls(pilotIndices(:,1,tx),:,tx,rx) = rxPilotSignal(:,:,tx,rx) ./ pilotSignal(:, :, tx);
+            end
+        end
+
         csiPreTemp(1,:,:,:,:,:) = csiPreTemp(2,:,:,:,:,:);
         csiPreTemp(2,:,:,:,:,:) = csiPreTemp(3,:,:,:,:,:);
-        csiPreTemp(3,:,:,:,:,1) = real(hValid);
-        csiPreTemp(3,:,:,:,:,2) = imag(hValid);
+        csiPreTemp(3,:,:,:,:,1) = real(csi_ls(validSubcIndices,:,:,:));
+        csiPreTemp(3,:,:,:,:,2) = imag(csi_ls(validSubcIndices,:,:,:));
 
         if frame < 1
             continue;
@@ -327,7 +338,6 @@ for idx = 1:length(snrValues)
             end
         end
         
-
         %% AI信道估计与均衡
         % 计算导频处信道估计
         csi_ls = zeros(numSubc, numSym, numTx, numRx);
@@ -336,6 +346,7 @@ for idx = 1:length(snrValues)
                 csi_ls(pilotIndices(:,1,tx),:,tx,rx) = rxPilotSignal(:,:,tx,rx) ./ pilotSignal(:, :, tx);
             end
         end
+
         %% 信道估计
         % csiEncoder估计
         csiEncoder_valid = csiEncoderInfer(csiEncoderModel, csi_ls(validSubcIndices,:,:,:));
@@ -344,6 +355,7 @@ for idx = 1:length(snrValues)
 
         % csiFormer估计
         csiFormer_valid = csiFormerInfer(csiFormerModel,csi_ls(validSubcIndices,:,:,:), csiPreTemp(1:2,:,:,:,:,:));
+
         csiFormer_data = csiFormer_valid(valid2DataIndices,:,:,:);
         loss_csiFormer = loss_csiFormer + immse(csiFormer_data, hPerfect);
         
@@ -433,13 +445,13 @@ colors = lines(11);
 
 % plot(snrValues, ser_ideal_zf(:,1),       '-o', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect ZF');
 plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
-plot(snrValues, ser_ideal_eqDnn(:,1),    '-d', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNN');
+% plot(snrValues, ser_ideal_eqDnn(:,1),    '-d', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNN');
 plot(snrValues, ser_ideal_eqDnnPro(:,1),    '--v', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNNPro');
-% plot(snrValues, ser_ls_zf(:,1),          '-^', 'Color', colors(4,:),  'LineWidth', 1.5, 'DisplayName', 'LS ZF');
+plot(snrValues, ser_ls_zf(:,1),          '-^', 'Color', colors(4,:),  'LineWidth', 1.5, 'DisplayName', 'LS ZF');
 % plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(5,:),  'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
 % plot(snrValues, ser_mmse_zf(:,1),        '-v', 'Color', colors(6,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE ZF');
 % plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(7,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
-% plot(snrValues, ser_csiEncoder_zf(:,1),  '-x', 'Color', colors(8,:),  'LineWidth', 1.5, 'DisplayName', 'AI csiEncoder ZF');
+plot(snrValues, ser_csiEncoder_zf(:,1),  '-x', 'Color', colors(8,:),  'LineWidth', 1.5, 'DisplayName', 'AI csiEncoder ZF');
 % plot(snrValues, ser_csiFormer_zf(:,1),   '--o', 'Color', colors(9,:),  'LineWidth', 1.5, 'DisplayName', 'AI csiFormer ZF');
 % plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(10,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer MMSE');
 plot(snrValues, ser_csiFormer_eqDnn(:,1),'--d', 'Color', colors(11,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer EQDNN');
