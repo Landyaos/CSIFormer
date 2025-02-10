@@ -226,7 +226,7 @@ mimoChannel = comm.MIMOChannel(...
     'FadingDistribution', 'Rayleigh', ...
     'PathGainsOutputPort', true,...
     'RandomStream', 'mt19937ar with seed', ...  % 使用固定种子的随机数流
-    'Seed', 349727938);   % 开启路径增益输出
+    'Seed', 2.7777e+09);   % 开启路径增益输出
 
 mimoChannelInfo = info(mimoChannel);
 pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
@@ -248,7 +248,7 @@ ser_mmse_mmse = zeros(length(snrValues), 3);
 ser_csiEncoder_zf = zeros(length(snrValues), 3);
 ser_csiFormer_zf = zeros(length(snrValues), 3);
 ser_csiFormer_mmse = zeros(length(snrValues), 3);
-ser_csiFormer_eqDnn = zeros(length(snrValues), 3);
+ser_csiFormer_eqDnnPro = zeros(length(snrValues), 3);
 
 % 信道估计MSE LOSS 数据对比
 mse_csi_ls = zeros(length(snrValues), 1);
@@ -397,10 +397,10 @@ for idx = 1:length(snrValues)
         ser_csiFormer_mmse(idx, :) = er_csiFormer_mmse(txStream, rxStream_csiFormer_mmse);
 
         % AI csiFormer+eqDnn 信道均衡
-        eqSignal_csiFormer_eqDnn = eqDnnInfer(eqDnnModel, csiFormer_valid, finalSignal(validSubcIndices,:,:));
-        eqSignal_csiFormer_eqDnn = eqSignal_csiFormer_eqDnn(valid2DataIndices,:,:);
-        rxStream_csiFormer_eqDnn = pskdemod(reshape(eqSignal_csiFormer_eqDnn, [], 1), M);
-        ser_csiFormer_eqDnn(idx, :) = er_csiFormer_eqDnn(txStream, rxStream_csiFormer_eqDnn);
+        eqSignal_csiFormer_eqDnnPro = eqDnnProInfer(eqDnnModel, csiFormer_valid, finalSignal(validSubcIndices,:,:));
+        eqSignal_csiFormer_eqDnnPro = eqSignal_csiFormer_eqDnnPro(valid2DataIndices,:,:);
+        rxStream_csiFormer_eqDnnPro = pskdemod(reshape(eqSignal_csiFormer_eqDnnPro, [], 1), M);
+        ser_csiFormer_eqDnnPro(idx, :) = er_csiFormer_eqDnn(txStream, rxStream_csiFormer_eqDnnPro);
 
         % 完美信道 MMSE均衡
         eqSignal_ideal_mmse = ofdmEqualize(rxDataSignal,reshape(hPerfect,[],numTx,numRx), noiseVar, Algorithm="mmse");
@@ -436,35 +436,19 @@ for idx = 1:length(snrValues)
 end
 
 %% 图形绘制部分
+% 手动定义对比鲜明的颜色矩阵
+colors = [
+    0.0000, 0.4470, 0.7410;  % 蓝色 (Blue)
+    0.8500, 0.3250, 0.0980;  % 橙色 (Orange)
+    0.9290, 0.6940, 0.1250;  % 黄色 (Yellow)
+    0.4940, 0.1840, 0.5560;  % 紫色 (Purple)
+    0.4660, 0.6740, 0.1880;  % 绿色 (Green)
+    0.3010, 0.7450, 0.9330;  % 青色 (Cyan)
+    0.6350, 0.0780, 0.1840;  % 红色 (Red)
+];
 
-% --- 图1：SER 误码率曲线 ---
-figure;
-hold on;
-% 使用 MATLAB 内置的颜色序列（共11种）
-colors = lines(11);
 
-% plot(snrValues, ser_ideal_zf(:,1),       '-o', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect ZF');
-plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
-% plot(snrValues, ser_ideal_eqDnn(:,1),    '-d', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNN');
-plot(snrValues, ser_ideal_eqDnnPro(:,1),    '--v', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNNPro');
-plot(snrValues, ser_ls_zf(:,1),          '-^', 'Color', colors(4,:),  'LineWidth', 1.5, 'DisplayName', 'LS ZF');
-% plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(5,:),  'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
-% plot(snrValues, ser_mmse_zf(:,1),        '-v', 'Color', colors(6,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE ZF');
-% plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(7,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
-plot(snrValues, ser_csiEncoder_zf(:,1),  '-x', 'Color', colors(8,:),  'LineWidth', 1.5, 'DisplayName', 'AI csiEncoder ZF');
-% plot(snrValues, ser_csiFormer_zf(:,1),   '--o', 'Color', colors(9,:),  'LineWidth', 1.5, 'DisplayName', 'AI csiFormer ZF');
-% plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(10,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer MMSE');
-plot(snrValues, ser_csiFormer_eqDnn(:,1),'--d', 'Color', colors(11,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer EQDNN');
-
-grid on;
-xlabel('SNR (dB)');
-ylabel('Symbol Error Rate (SER)');
-title('SER vs. SNR for Different Channel Estimation and Equalization Algorithms');
-legend('Location', 'best');
-set(gca, 'YScale', 'log');  % Y轴使用对数刻度
-hold off;
-
-% --- 图2：信道估计 MSE LOSS 曲线 ---
+% --- 图1：信道估计 MSE LOSS 曲线对比 ---
 figure;
 hold on;
 plot(snrValues, mse_csi_ls,        '-o', 'LineWidth', 1.5, 'DisplayName', 'LS');
@@ -475,9 +459,104 @@ plot(snrValues, mse_csi_csiEncoder, '-^', 'LineWidth', 1.5, 'DisplayName', 'AI (
 grid on;
 xlabel('SNR (dB)');
 ylabel('MSE with h_{Perfect}');
-title('Channel Estimation MSE vs. SNR');
+title('MSE vs. SNR for Different Channel Estimation Algorithms');
 legend('Location', 'best');
 hold off;
+
+% --- 图2：信道估计  SER 误码率曲线对比 ---
+figure;
+hold on;
+
+plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE')
+plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
+plot(snrValues, ser_csiEncoder_zf(:,1),  '--x', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'AI csiEncoder MMSE');
+plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(4,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer MMSE');
+
+grid on;
+xlabel('SNR (dB)');
+ylabel('Symbol Error Rate (SER)');
+title('SER vs. SNR for Different Channel Estimation Algorithms');
+legend('Location', 'best');
+set(gca, 'YScale', 'log');  % Y轴使用对数刻度
+hold off;
+
+% --- 图3：信道估计与信道均衡 SER 误码率曲线 ---
+figure;
+hold on;
+
+plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
+plot(snrValues, ser_ideal_eqDnnPro(:,1),    '-v', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNN');
+plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(4,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
+plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(5,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer MMSE');
+plot(snrValues, ser_csiFormer_eqDnnPro(:,1),'--d', 'Color', colors(6,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer EQDNN');
+
+grid on;
+xlabel('SNR (dB)');
+ylabel('Symbol Error Rate (SER)');
+title('SER vs. SNR for Different Channel Estimation and Equalization Algorithms');
+legend('Location', 'best');
+set(gca, 'YScale', 'log');  % Y轴使用对数刻度
+hold off;
+
+
+
+% --- 图x：SER 误码率曲线 ---
+figure;
+hold on;
+% 使用 MATLAB 内置的颜色序列（共11种）
+colors = lines(11);
+
+plot(snrValues, ser_ideal_zf(:,1),       '-o', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect ZF');
+plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
+plot(snrValues, ser_ideal_eqDnn(:,1),    '-d', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNN');
+plot(snrValues, ser_ideal_eqDnnPro(:,1),    '--v', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNNPro');
+plot(snrValues, ser_ls_zf(:,1),          '-^', 'Color', colors(4,:),  'LineWidth', 1.5, 'DisplayName', 'LS ZF');
+plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(5,:),  'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
+plot(snrValues, ser_mmse_zf(:,1),        '-v', 'Color', colors(6,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE ZF');
+plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(7,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
+plot(snrValues, ser_csiEncoder_zf(:,1),  '-x', 'Color', colors(8,:),  'LineWidth', 1.5, 'DisplayName', 'AI csiEncoder ZF');
+plot(snrValues, ser_csiFormer_zf(:,1),   '--o', 'Color', colors(9,:),  'LineWidth', 1.5, 'DisplayName', 'AI csiFormer ZF');
+plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(10,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer MMSE');
+plot(snrValues, ser_csiFormer_eqDnnPro(:,1),'--d', 'Color', colors(11,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer EQDNN');
+
+grid on;
+xlabel('SNR (dB)');
+ylabel('Symbol Error Rate (SER)');
+title('SER vs. SNR for Different Channel Estimation and Equalization Algorithms');
+legend('Location', 'best');
+set(gca, 'YScale', 'log');  % Y轴使用对数刻度
+hold off;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 %% 自定义函数

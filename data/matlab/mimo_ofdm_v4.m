@@ -72,7 +72,9 @@ minSeed = 0;
 maxSeed = 2^32 - 1;   % 4294967295
 seed = randi([minSeed, maxSeed]);
 seed
-% 349727938 1.7875e+09 578683907 1.2870e+09 1.9602e+09 1.3634e+09 1.2585e+09 1.3596e+09 1.2299e+09
+% 349727938 1.7875e+09 578683907 1.2870e+09  1.3634e+09 1.2585e+09
+% 1.3596e+09 1.2299e+09 2.1138e+09  1.2454e+09 289687976 4.0460e+09 2.7777e+09
+
 % 1.4398e+09
 % 信道模型
 mimoChannel = comm.MIMOChannel(...
@@ -95,7 +97,7 @@ toffset = mimoChannelInfo.ChannelFilterDelay;
 snrValues = 0:5:30;
 serPerfectMMSE = zeros(length(snrValues), 3);
 serLSZF = zeros(length(snrValues), 3);
-serLSMMSE = zeros(length(snrValues), 3);
+serMMSEMMSE = zeros(length(snrValues), 3);
 
 for idx = 1:1:length(snrValues)
     snr = snrValues(idx);
@@ -103,7 +105,7 @@ for idx = 1:1:length(snrValues)
     zfErrorRate = comm.ErrorRate;
     mmseErrorRate = comm.ErrorRate;
 
-    for frame = 1:1:30
+    for frame = 1:1:100
         %% 数据发送与接收
         % 数据符号生成
         txSymStream = randi([0 M-1], numFrameSymbols, 1); 
@@ -164,7 +166,7 @@ for idx = 1:1:length(snrValues)
         %% 评价
         serPerfectMMSE(idx,:) = toolBoxErrorRate(txSymStream, eqStream);
         serLSZF(idx,:) = zfErrorRate(txSymStream, eqStreamZF);
-        serLSMMSE(idx,:) = mmseErrorRate(txSymStream, eqStreamMMSE);
+        serMMSEMMSE(idx,:) = mmseErrorRate(txSymStream, eqStreamMMSE);
     end
 end
 
@@ -173,7 +175,7 @@ hold on;
 % 绘制每种算法的误符号率曲线
 plot(snrValues, serPerfectMMSE(:, 1), '-o', 'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
 plot(snrValues, serLSZF(:, 1), '-s', 'LineWidth', 1.5, 'DisplayName', 'LS ZF');
-plot(snrValues, serLSMMSE(:, 1), '-d', 'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
+plot(snrValues, serMMSEMMSE(:, 1), '-d', 'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
 
 % 设置图形属性
 grid on;
