@@ -69,7 +69,7 @@ ofdmMod = comm.OFDMModulator('FFTLength', numSubc, ...
                              'NumTransmitAntennas', numTx);
 
 minSeed = 0;
-maxSeed = 2^32 - 1;   % 4294967295
+maxSeed = 2^32 - 1;   % 4294967295 
 seed = randi([minSeed, maxSeed]);
 seed
 % 349727938 1.7875e+09 578683907 1.2870e+09  1.3634e+09 1.2585e+09

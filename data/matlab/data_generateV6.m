@@ -64,8 +64,8 @@ ofdmMod = comm.OFDMModulator('FFTLength', numSubc, ...
 
 %% 数据集采集
 numFrame = 2;
-snrValues = 15:10:35;
-datasetPath = {'../raw/trainDataV3.mat','../raw/valDataV3.mat'};
+snrValues = 15:5:30;
+datasetPath = {'../raw/trainDataV4.mat','../raw/valDataV4.mat'};
 datasetConfig = [10000,1000];
 
 

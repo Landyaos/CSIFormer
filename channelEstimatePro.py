@@ -80,7 +80,7 @@ class PositionalEncoding(nn.Module):
 # 第一部分：CSIFormer (编码器)
 ###############################################################################
 class CSIEncoder(nn.Module):
-    def __init__(self, d_model=256, nhead=4, n_layers=4, n_tx=2, n_rx=2, max_len=7000):
+    def __init__(self, d_model=256, nhead=4, n_layers=4, n_tx=2, n_rx=2, dim_feedforward=1024, max_len=7000):
         """
         编码器模块
         :param d_model: Transformer 嵌入维度
@@ -106,7 +106,7 @@ class CSIEncoder(nn.Module):
             nn.TransformerEncoderLayer(
                 d_model=d_model,
                 nhead=nhead,
-                dim_feedforward=1024,
+                dim_feedforward=dim_feedforward,
                 batch_first=True
             ),
             num_layers=n_layers
@@ -137,7 +137,7 @@ class CSIEncoder(nn.Module):
 # 第二部分：EnhancedCSIDecoder (解码器)
 ###############################################################################
 class EnhancedCSIDecoder(nn.Module):
-    def __init__(self, d_model=256, nhead=4, n_layers=4, n_tx=2, n_rx=2, max_len=7000):
+    def __init__(self, d_model=256, nhead=4, n_layers=4, n_tx=2, n_rx=2, dim_feedforward=1024, max_len=7000):
         """
         :param d_model: Decoder 嵌入维度
         :param nhead: 注意力头数
@@ -156,7 +156,7 @@ class EnhancedCSIDecoder(nn.Module):
             nn.TransformerDecoderLayer(
                 d_model=d_model, 
                 nhead=nhead,
-                dim_feedforward=1024,
+                dim_feedforward=dim_feedforward,
                 batch_first=True
             ),
             num_layers=n_layers
@@ -212,7 +212,8 @@ class CSIFormer(nn.Module):
                  nhead=4, 
                  n_layers=4, 
                  n_tx=2, 
-                 n_rx=2):
+                 n_rx=2,
+                 dim_feedforward=1024):
         """
         同时包含：
         1) CSIEncoder (编码器): 根据导频估计当前帧
@@ -222,8 +223,8 @@ class CSIFormer(nn.Module):
         :param n_frame: 前 n 帧参考数
         """
         super(CSIFormer, self).__init__()
-        self.encoder = CSIEncoder(d_model, nhead, n_layers, n_rx, n_rx)
-        self.decoder = EnhancedCSIDecoder(d_model, nhead, n_layers, n_tx, n_rx)
+        self.encoder = CSIEncoder(d_model, nhead, n_layers, n_rx, n_rx, dim_feedforward)
+        self.decoder = EnhancedCSIDecoder(d_model, nhead, n_layers, n_tx, n_rx, dim_feedforward)
 
 
     def forward(self, csi_ls, previous_csi):

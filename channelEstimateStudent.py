@@ -12,8 +12,8 @@ import torch.optim as optim
 import math
 import gc
 
-
 # ##### 数据集预处理
+
 class CSIFormerDataset(Dataset):
     
     def __init__(self, csi_ls, csi_pre, csi_label):
@@ -79,7 +79,7 @@ class PositionalEncoding(nn.Module):
 # 第一部分：CSIFormer (编码器)
 ###############################################################################
 class CSIEncoder(nn.Module):
-    def __init__(self, d_model=256, nhead=4, n_layers=4, n_tx=2, n_rx=2, max_len=7000):
+    def __init__(self, d_model=256, nhead=4, n_layers=4, n_tx=2, n_rx=2, dim_feedforward=1024, max_len=7000):
         """
         编码器模块
         :param d_model: Transformer 嵌入维度
@@ -105,7 +105,7 @@ class CSIEncoder(nn.Module):
             nn.TransformerEncoderLayer(
                 d_model=d_model,
                 nhead=nhead,
-                dim_feedforward=1024,
+                dim_feedforward=dim_feedforward,
                 batch_first=True
             ),
             num_layers=n_layers
@@ -136,7 +136,7 @@ class CSIEncoder(nn.Module):
 # 第二部分：EnhancedCSIDecoder (解码器)
 ###############################################################################
 class EnhancedCSIDecoder(nn.Module):
-    def __init__(self, d_model=256, nhead=4, n_layers=4, n_tx=2, n_rx=2, max_len=7000):
+    def __init__(self, d_model=256, nhead=4, n_layers=4, n_tx=2, n_rx=2, dim_feedforward=1024, max_len=7000):
         """
         :param d_model: Decoder 嵌入维度
         :param nhead: 注意力头数
@@ -155,7 +155,7 @@ class EnhancedCSIDecoder(nn.Module):
             nn.TransformerDecoderLayer(
                 d_model=d_model, 
                 nhead=nhead,
-                dim_feedforward=1024,
+                dim_feedforward=dim_feedforward,
                 batch_first=True
             ),
             num_layers=n_layers
@@ -205,13 +205,14 @@ class EnhancedCSIDecoder(nn.Module):
 ###############################################################################
 # CSIFormer：同时包含 Encoder 和 Decoder，批维在前
 ###############################################################################
-class CSIFormerLite(nn.Module):
+class CSIFormer(nn.Module):
     def __init__(self, 
                  d_model=256, 
                  nhead=4, 
                  n_layers=4, 
                  n_tx=2, 
-                 n_rx=2):
+                 n_rx=2,
+                 dim_feedforward=1024):
         """
         同时包含：
         1) CSIEncoder (编码器): 根据导频估计当前帧
@@ -220,9 +221,9 @@ class CSIFormerLite(nn.Module):
         :param n_tx, n_rx: 发射/接收天线数
         :param n_frame: 前 n 帧参考数
         """
-        super(CSIFormerLite, self).__init__()
-        self.encoder = CSIEncoder(d_model, nhead, n_layers, n_rx, n_rx)
-        self.decoder = EnhancedCSIDecoder(d_model, nhead, n_layers, n_tx, n_rx)
+        super(CSIFormer, self).__init__()
+        self.encoder = CSIEncoder(d_model, nhead, n_layers, n_rx, n_rx, dim_feedforward)
+        self.decoder = EnhancedCSIDecoder(d_model, nhead, n_layers, n_tx, n_rx, dim_feedforward)
 
 
     def forward(self, csi_ls, previous_csi):
@@ -239,7 +240,43 @@ class CSIFormerLite(nn.Module):
         csi_dec = self.decoder(csi_enc, previous_csi)  # [B, n_subc, n_sym, n_tx, n_rx, 2]
         return csi_dec
 
+###############################################################################
+# CSIFormer：同时包含 Encoder 和 Decoder，批维在前
+###############################################################################
+class CSIFormerStudent(nn.Module):
+    def __init__(self, 
+                 d_model=256, 
+                 nhead=2, 
+                 n_layers=2, 
+                 n_tx=2, 
+                 n_rx=2,
+                 dim_feedforward=256):
+        """
+        同时包含：
+        1) CSIEncoder (编码器): 根据导频估计当前帧
+        2) EnhancedCSIDecoder (解码器): 利用前 n 帧和当前帧初步估计进行增强
+        :param d_model, nhead, n_layers: Transformer相关超参
+        :param n_tx, n_rx: 发射/接收天线数
+        :param n_frame: 前 n 帧参考数
+        """
+        super(CSIFormerStudent, self).__init__()
+        self.encoder = CSIEncoder(d_model, nhead, n_layers, n_rx, n_rx, dim_feedforward)
+        self.decoder = EnhancedCSIDecoder(d_model, nhead, n_layers, n_tx, n_rx, dim_feedforward)
 
+
+    def forward(self, csi_ls, previous_csi):
+        """
+        :param csi_ls: 当前帧的导频估计 [B, n_subc, n_sym, n_tx, n_rx, 2]
+        :param previous_csi: 前 n 帧历史 CSI [B, n_frame, n_subc, n_sym, n_tx, n_rx, 2]
+        :return: (csi_enc, csi_dec)
+            csi_enc: 初步估计 [B, n_subc, n_sym, n_tx, n_rx, 2]
+            csi_dec: 增强估计 [B, n_subc, n_sym, n_tx, n_rx, 2]
+        """
+        # (1) 编码器：利用导频生成当前帧的初步 CSI 特征
+        csi_enc = self.encoder(csi_ls)  # [B, seq_len, d_model]
+        # (2) 解码器：结合前 n 帧的 CSI 与 csi_enc，输出增强后的 CSI
+        csi_dec = self.decoder(csi_enc, previous_csi)  # [B, n_subc, n_sym, n_tx, n_rx, 2]
+        return csi_dec
 
 # 模型训练
 def train_model(model, dataloader_train, dataloader_val, criterion, optimizer, scheduler, epochs, device, checkpoint_dir='./checkpoints'):
@@ -354,37 +391,43 @@ class ComplexMSELoss(nn.Module):
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-
-print("load data")
-data_train = hdf5storage.loadmat('/root/autodl-tmp/data/raw/trainData.mat')
-data_val = hdf5storage.loadmat('/root/autodl-tmp/data/raw/valData.mat')
-checkpoint_dir = '/root/autodl-tmp/checkpoints'
-# checkpoint_dir = './checkpoints'
-# data_train = hdf5storage.loadmat('./data/raw/trainData.mat')
-# data_val = hdf5storage.loadmat('./data/raw/valData.mat')
-print("load done")
-
-# 主函数执行
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(device)
-lr = 1e-3
-epochs = 20
-batch_size = 36
-shuffle_flag = True
-model = CSIFormerLite()
+model = CSIFormer()
 print(f"Total trainable parameters: {count_parameters(model)}")
-print('train model')
-dataset_train = dataset_preprocess(data_train)
-dataset_val = dataset_preprocess(data_val)
-criterion = ComplexMSELoss()
-optimizer = optim.Adam(model.parameters(), lr=lr)
-dataloader_train = DataLoader(dataset=dataset_train, batch_size=batch_size, shuffle=shuffle_flag, num_workers=4)
-dataloader_val = DataLoader(dataset=dataset_val, batch_size=batch_size, shuffle=shuffle_flag, num_workers=4)
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1)
+print('train model1')
+
+model2 = CSIFormerStudent()
+print(f"Total trainable parameters: {count_parameters(model2)}")
+print('train model2')
+
+# print("load data")
+# data_train = hdf5storage.loadmat('/root/autodl-tmp/data/raw/trainData.mat')
+# data_val = hdf5storage.loadmat('/root/autodl-tmp/data/raw/valData.mat')
+# checkpoint_dir = '/root/autodl-tmp/checkpoints'
+# # checkpoint_dir = './checkpoints'
+# # data_train = hdf5storage.loadmat('./data/raw/trainData.mat')
+# # data_val = hdf5storage.loadmat('./data/raw/valData.mat')
+# print("load done")
+
+# # 主函数执行
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# print(device)
+# lr = 1e-3
+# epochs = 20
+# batch_size = 36
+# shuffle_flag = True
+# model = CSIFormerStudent()
+# print(f"Total trainable parameters: {count_parameters(model)}")
+# print('train model')
+# dataset_train = dataset_preprocess(data_train)
+# dataset_val = dataset_preprocess(data_val)
+# criterion = ComplexMSELoss()
+# optimizer = optim.Adam(model.parameters(), lr=lr)
+# dataloader_train = DataLoader(dataset=dataset_train, batch_size=batch_size, shuffle=shuffle_flag, num_workers=4)
+# dataloader_val = DataLoader(dataset=dataset_val, batch_size=batch_size, shuffle=shuffle_flag, num_workers=4)
+# scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1)
 
 
-
-train_model(model, dataloader_train,dataloader_val, criterion, optimizer,scheduler, epochs, device, checkpoint_dir)
+# train_model(model, dataloader_train,dataloader_val, criterion, optimizer,scheduler, epochs, device, checkpoint_dir)
 
 
 
