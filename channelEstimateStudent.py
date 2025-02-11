@@ -277,96 +277,7 @@ class CSIFormerStudent(nn.Module):
         # (2) 解码器：结合前 n 帧的 CSI 与 csi_enc，输出增强后的 CSI
         csi_dec = self.decoder(csi_enc, previous_csi)  # [B, n_subc, n_sym, n_tx, n_rx, 2]
         return csi_dec
-
-# 模型训练
-def train_model(model, dataloader_train, dataloader_val, criterion, optimizer, scheduler, epochs, device, checkpoint_dir='./checkpoints'):
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    best_loss = float('inf')
-    start_epoch = 0
-    model.to(device)
-    # 查看是否有可用的最近 checkpoint
-    latest_path = os.path.join(checkpoint_dir, model.__class__.__name__ + '_v1_latest.pth')
-    best_path = os.path.join(checkpoint_dir, model.__class__.__name__ + '_v1_best.pth')
-
-    if os.path.isfile(latest_path):
-        print(f"[INFO] Resuming training from '{latest_path}'")
-        checkpoint = torch.load(latest_path, map_location=device)
-
-        # 加载模型、优化器、调度器状态
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        if scheduler is not None and 'scheduler_state_dict' in checkpoint:
-            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        start_epoch = checkpoint['epoch'] + 1
-        best_loss = checkpoint.get('best_loss', best_loss)
-        print(f"[INFO] Resumed epoch {start_epoch}, best_loss={best_loss:.6f}")
     
-    # 分epoch训练
-
-    for epoch in range(start_epoch, epochs):
-        print(f"\nEpoch [{epoch + 1}/{epochs}]")
-        # --------------------- Train ---------------------
-        model.train()
-        total_loss = 0
-        for batch_idx, (csi_ls_train, pre_csi_train, csi_label) in enumerate(dataloader_train):
-            csi_ls_train = csi_ls_train.to(device)
-            pre_csi_train = pre_csi_train.to(device)
-            csi_label = csi_label.to(device)
-            optimizer.zero_grad()
-            csi_dec = model(csi_ls_train, pre_csi_train)
-            joint_loss = criterion(csi_dec, csi_label)
-            joint_loss.backward()
-            optimizer.step()
-            total_loss += joint_loss.item()
-
-            if (batch_idx + 1) % 50 == 0:
-                print(f"Epoch {epoch + 1}, Batch {batch_idx + 1}/{len(dataloader_train)}, Loss: {joint_loss.item():.4f}")
-        
-        train_loss = total_loss / len(dataloader_train)
-        # 学习率调度器步进（根据策略）
-        if scheduler is not None:
-            scheduler.step(train_loss)  # 对于 ReduceLROnPlateau 等需要传入指标的调度器
-
-        print(f"Epoch {epoch + 1}, Loss: {total_loss / len(dataloader_train)}")
-
-        # --------------------- Validate ---------------------
-        model.eval()
-        val_loss = 0.0
-        with torch.no_grad():
-            for batch_idx, (csi_ls_val, pre_csi_val, csi_label) in enumerate(dataloader_val):
-                csi_ls_val = csi_ls_val.to(device)
-                pre_csi_val = pre_csi_val.to(device)
-                csi_label = csi_label.to(device)
-
-                csi_dec = model(csi_ls_val, pre_csi_val)
-                total_loss = criterion(csi_dec, csi_label)
-                val_loss += total_loss.item()
-        
-        val_loss /= len(dataloader_val)
-        print(f"Val Loss: {val_loss:.4f}")
-
-        # --------------------- Checkpoint 保存 ---------------------
-        # 1) 保存最新checkpoint（确保断点续训）
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'scheduler_state_dict': scheduler.state_dict() if scheduler is not None else None,
-            'best_loss': best_loss,
-        }, latest_path)
-
-        # 2) 如果当前验证集 Loss 最佳，则保存为 best.pth
-        if val_loss < best_loss:
-            best_loss = val_loss 
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict() if scheduler is not None else None,
-                'best_loss': best_loss,
-            }, best_path)
-            print(f"[INFO] Best model saved at epoch {epoch + 1}, val_loss={val_loss:.4f}")
-
 
 class ComplexMSELoss(nn.Module):
     def __init__(self):
@@ -387,47 +298,180 @@ class ComplexMSELoss(nn.Module):
         loss = torch.mean(torch.square(torch.sqrt(torch.square(diff[...,0]) + torch.square(diff[...,1]))))
         return loss
         
+class DistillationLoss(nn.Module):
+    def __init__(self, alpha=0.2, beta=0.3, gamma=0.5):
+        super().__init__()
+        self.alpha = alpha  # 软目标蒸馏权重
+        self.beta = beta    # 特征蒸馏权重
+        self.gamma = gamma  # 真实标签损失权重
+        self.mse = ComplexMSELoss()
+
+    def forward(self, student_out, teacher_out, student_feat, teacher_feat, labels):
+        # 软目标蒸馏损失（学生输出与教师输出的MSE）
+        soft_loss = self.mse(student_out, teacher_out.detach())
+        # 特征蒸馏损失（编码器输出的MSE）
+        feat_loss = self.mse(student_feat, teacher_feat.detach())
+        # 真实标签损失（学生输出与真实值的MSE）
+        label_loss = self.mse(student_out, labels)
+        # 加权总损失
+        total_loss = (self.alpha * soft_loss + 
+                     self.beta * feat_loss + 
+                     self.gamma * label_loss)
+        return total_loss
+
 # 计算参数量
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-model = CSIFormer()
-print(f"Total trainable parameters: {count_parameters(model)}")
-print('train model1')
+teacher = CSIFormer()
+print(f"Teacher Model total trainable parameters: {count_parameters(teacher)}")
 
-model2 = CSIFormerStudent()
-print(f"Total trainable parameters: {count_parameters(model2)}")
-print('train model2')
+student = CSIFormerStudent()
+print(f"Student Model total trainable parameters: {count_parameters(student)}")
 
-# print("load data")
-# data_train = hdf5storage.loadmat('/root/autodl-tmp/data/raw/trainData.mat')
-# data_val = hdf5storage.loadmat('/root/autodl-tmp/data/raw/valData.mat')
-# checkpoint_dir = '/root/autodl-tmp/checkpoints'
-# # checkpoint_dir = './checkpoints'
-# # data_train = hdf5storage.loadmat('./data/raw/trainData.mat')
-# # data_val = hdf5storage.loadmat('./data/raw/valData.mat')
-# print("load done")
+# 教师模型 hook（存为教师 encoder 的属性）
+def teacher_encoder_hook(module, input, output):
+    module.activation = output.detach()
 
-# # 主函数执行
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# print(device)
-# lr = 1e-3
-# epochs = 20
-# batch_size = 36
-# shuffle_flag = True
-# model = CSIFormerStudent()
-# print(f"Total trainable parameters: {count_parameters(model)}")
-# print('train model')
-# dataset_train = dataset_preprocess(data_train)
-# dataset_val = dataset_preprocess(data_val)
-# criterion = ComplexMSELoss()
-# optimizer = optim.Adam(model.parameters(), lr=lr)
-# dataloader_train = DataLoader(dataset=dataset_train, batch_size=batch_size, shuffle=shuffle_flag, num_workers=4)
-# dataloader_val = DataLoader(dataset=dataset_val, batch_size=batch_size, shuffle=shuffle_flag, num_workers=4)
-# scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1)
+# 学生模型 hook（存为学生 encoder 的属性）
+def student_encoder_hook(module, input, output):
+    module.activation = output  # 学生需要梯度
+
+# 注册 hook
+teacher.encoder.register_forward_hook(teacher_encoder_hook)
+student.encoder.register_forward_hook(student_encoder_hook)
+
+# 模型训练
+def train_model(teacher, student, dataloader_train, dataloader_val, criterion, optimizer, scheduler, epochs, device, checkpoint_dir='./checkpoints'):
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    best_loss = float('inf')
+    start_epoch = 0
+
+    criterion_val = ComplexMSELoss()
+
+    teacher.to(device)
+    teacher_path = os.path.join(checkpoint_dir, teacher.__class__.__name__ + '_v1_best.pth')
+    if os.path.isfile(teacher_path):
+        print(f"[INFO] Resuming training from '{teacher_path}'")
+        checkpoint = torch.load(teacher_path, map_location=device)
+        teacher.load_state_dict(checkpoint['model_state_dict'])
+    else:
+        raise Exception('something to wrong')
+
+    student.to(device)
+    # 查看是否有可用的最近 checkpoint
+    latest_path = os.path.join(checkpoint_dir, student.__class__.__name__ + '_v1_latest.pth')
+    best_path = os.path.join(checkpoint_dir, student.__class__.__name__ + '_v1_best.pth')
+    if os.path.isfile(latest_path):
+        print(f"[INFO] Resuming training from '{latest_path}'")
+        checkpoint = torch.load(latest_path, map_location=device)
+
+        # 加载模型、优化器、调度器状态
+        student.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if scheduler is not None and 'scheduler_state_dict' in checkpoint:
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        best_loss = checkpoint.get('best_loss', best_loss)
+        print(f"[INFO] Resumed epoch {start_epoch}, best_loss={best_loss:.6f}")
+
+    # 分epoch训练
+    for epoch in range(start_epoch, epochs):
+        print(f"\nEpoch [{epoch + 1}/{epochs}]")
+        # --------------------- Train ---------------------
+        student.train()
+        
+        total_loss = 0
+        for batch_idx, (csi_ls_train, pre_csi_train, csi_label) in enumerate(dataloader_train):
+
+            csi_ls_train = csi_ls_train.to(device)
+            pre_csi_train = pre_csi_train.to(device)
+            csi_label = csi_label.to(device)
+
+            with torch.no_grad():
+                teacher_output = teacher(csi_ls_train, pre_csi_train)
+            optimizer.zero_grad()
+            student_output = student(csi_ls_train, pre_csi_train)
+
+            joint_loss = criterion(student_output, teacher_output, student.encoder.activation, teacher.encoder.activation, csi_label)
+            joint_loss.backward()
+            optimizer.step()
+            total_loss += joint_loss.item()
+
+            if (batch_idx + 1) % 50 == 0:
+                print(f"Epoch {epoch + 1}, Batch {batch_idx + 1}/{len(dataloader_train)}, Loss: {joint_loss.item():.4f}")
+        
+        train_loss = total_loss / len(dataloader_train)
+        # 学习率调度器步进（根据策略）
+        if scheduler is not None:
+            scheduler.step(train_loss)  # 对于 ReduceLROnPlateau 等需要传入指标的调度器
+
+        print(f"Epoch {epoch + 1}, Loss: {total_loss / len(dataloader_train)}")
+
+        # --------------------- Validate ---------------------
+        student.eval()
+        val_loss = 0.0
+        with torch.no_grad():
+            for batch_idx, (csi_ls_val, pre_csi_val, csi_label) in enumerate(dataloader_val):
+                csi_ls_val = csi_ls_val.to(device)
+                pre_csi_val = pre_csi_val.to(device)
+                csi_label = csi_label.to(device)
+
+                student_output = student(csi_ls_val, pre_csi_val)
+                total_loss = criterion_val(student_output, csi_label)
+                val_loss += total_loss.item()
+        
+        val_loss /= len(dataloader_val)
+        print(f"Val Loss: {val_loss:.4f}")
+
+        # --------------------- Checkpoint 保存 ---------------------
+        # 1) 保存最新checkpoint（确保断点续训）
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': student.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict() if scheduler is not None else None,
+            'best_loss': best_loss,
+        }, latest_path)
+
+        # 2) 如果当前验证集 Loss 最佳，则保存为 best.pth
+        if val_loss < best_loss:
+            best_loss = val_loss 
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': student.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict() if scheduler is not None else None,
+                'best_loss': best_loss,
+            }, best_path)
+            print(f"[INFO] Best model saved at epoch {epoch + 1}, val_loss={val_loss:.4f}")
 
 
-# train_model(model, dataloader_train,dataloader_val, criterion, optimizer,scheduler, epochs, device, checkpoint_dir)
+print("load data")
+data_train = hdf5storage.loadmat('/root/autodl-tmp/data/raw/trainDataV4.mat')
+data_val = hdf5storage.loadmat('/root/autodl-tmp/data/raw/valDataV4.mat')
+checkpoint_dir = '/root/autodl-tmp/checkpoints'
+print("load done")
+
+# 主函数执行
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(device)
+lr = 1e-3
+epochs = 20
+batch_size = 36
+shuffle_flag = True
+
+dataset_train = dataset_preprocess(data_train)
+dataset_val = dataset_preprocess(data_val)
+criterion = DistillationLoss()
+optimizer = optim.Adam(student.parameters(), lr=lr)
+dataloader_train = DataLoader(dataset=dataset_train, batch_size=batch_size, shuffle=shuffle_flag, num_workers=4)
+dataloader_val = DataLoader(dataset=dataset_val, batch_size=batch_size, shuffle=shuffle_flag, num_workers=4)
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1)
+
+
+print('train model')
+train_model(teacher, student, dataloader_train,dataloader_val, criterion, optimizer,scheduler, epochs, device, checkpoint_dir)
 
 
 
