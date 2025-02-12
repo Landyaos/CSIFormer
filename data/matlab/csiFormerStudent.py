@@ -43,7 +43,7 @@ class PositionalEncoding(nn.Module):
 # 第一部分：CSIFormer (编码器)
 ###############################################################################
 class CSIEncoder(nn.Module):
-    def __init__(self, d_model=256, nhead=4, n_layers=4, n_tx=2, n_rx=2, max_len=7000):
+    def __init__(self, d_model=256, nhead=4, n_layers=4, n_tx=2, n_rx=2, dim_feedforward=1024, max_len=7000):
         """
         编码器模块
         :param d_model: Transformer 嵌入维度
@@ -69,7 +69,7 @@ class CSIEncoder(nn.Module):
             nn.TransformerEncoderLayer(
                 d_model=d_model,
                 nhead=nhead,
-                dim_feedforward=1024,
+                dim_feedforward=dim_feedforward,
                 batch_first=True
             ),
             num_layers=n_layers
@@ -100,7 +100,7 @@ class CSIEncoder(nn.Module):
 # 第二部分：EnhancedCSIDecoder (解码器)
 ###############################################################################
 class EnhancedCSIDecoder(nn.Module):
-    def __init__(self, d_model=256, nhead=4, n_layers=4, n_tx=2, n_rx=2, max_len=7000):
+    def __init__(self, d_model=256, nhead=4, n_layers=4, n_tx=2, n_rx=2, dim_feedforward=1024, max_len=7000):
         """
         :param d_model: Decoder 嵌入维度
         :param nhead: 注意力头数
@@ -119,7 +119,7 @@ class EnhancedCSIDecoder(nn.Module):
             nn.TransformerDecoderLayer(
                 d_model=d_model, 
                 nhead=nhead,
-                dim_feedforward=1024,
+                dim_feedforward=dim_feedforward,
                 batch_first=True
             ),
             num_layers=n_layers
@@ -175,7 +175,8 @@ class CSIFormer(nn.Module):
                  nhead=4, 
                  n_layers=4, 
                  n_tx=2, 
-                 n_rx=2):
+                 n_rx=2,
+                 dim_feedforward=1024):
         """
         同时包含：
         1) CSIEncoder (编码器): 根据导频估计当前帧
@@ -185,8 +186,8 @@ class CSIFormer(nn.Module):
         :param n_frame: 前 n 帧参考数
         """
         super(CSIFormer, self).__init__()
-        self.encoder = CSIEncoder(d_model, nhead, n_layers, n_rx, n_rx)
-        self.decoder = EnhancedCSIDecoder(d_model, nhead, n_layers, n_tx, n_rx)
+        self.encoder = CSIEncoder(d_model, nhead, n_layers, n_rx, n_rx, dim_feedforward)
+        self.decoder = EnhancedCSIDecoder(d_model, nhead, n_layers, n_tx, n_rx, dim_feedforward)
 
 
     def forward(self, csi_ls, previous_csi):
@@ -203,12 +204,49 @@ class CSIFormer(nn.Module):
         csi_dec = self.decoder(csi_enc, previous_csi)  # [B, n_subc, n_sym, n_tx, n_rx, 2]
         return csi_dec
 
+###############################################################################
+# CSIFormer：同时包含 Encoder 和 Decoder，批维在前
+###############################################################################
+class CSIFormerStudent(nn.Module):
+    def __init__(self, 
+                 d_model=256, 
+                 nhead=2, 
+                 n_layers=2, 
+                 n_tx=2, 
+                 n_rx=2,
+                 dim_feedforward=256):
+        """
+        同时包含：
+        1) CSIEncoder (编码器): 根据导频估计当前帧
+        2) EnhancedCSIDecoder (解码器): 利用前 n 帧和当前帧初步估计进行增强
+        :param d_model, nhead, n_layers: Transformer相关超参
+        :param n_tx, n_rx: 发射/接收天线数
+        :param n_frame: 前 n 帧参考数
+        """
+        super(CSIFormerStudent, self).__init__()
+        self.encoder = CSIEncoder(d_model, nhead, n_layers, n_rx, n_rx, dim_feedforward)
+        self.decoder = EnhancedCSIDecoder(d_model, nhead, n_layers, n_tx, n_rx, dim_feedforward)
 
+
+    def forward(self, csi_ls, previous_csi):
+        """
+        :param csi_ls: 当前帧的导频估计 [B, n_subc, n_sym, n_tx, n_rx, 2]
+        :param previous_csi: 前 n 帧历史 CSI [B, n_frame, n_subc, n_sym, n_tx, n_rx, 2]
+        :return: (csi_enc, csi_dec)
+            csi_enc: 初步估计 [B, n_subc, n_sym, n_tx, n_rx, 2]
+            csi_dec: 增强估计 [B, n_subc, n_sym, n_tx, n_rx, 2]
+        """
+        # (1) 编码器：利用导频生成当前帧的初步 CSI 特征
+        csi_enc = self.encoder(csi_ls)  # [B, seq_len, d_model]
+        # (2) 解码器：结合前 n 帧的 CSI 与 csi_enc，输出增强后的 CSI
+        csi_dec = self.decoder(csi_enc, previous_csi)  # [B, n_subc, n_sym, n_tx, n_rx, 2]
+        return csi_dec
+    
 def load_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = CSIFormer().to(device)
-    model.load_state_dict(torch.load(os.path.join('../../checkpoints', model.__class__.__name__ + '_v3.pth'), map_location=device)['model_state_dict'])
-    print('load model path : ',os.path.join('../../checkpoints', model.__class__.__name__ + '_v3.pth'))
+    model = CSIFormerStudent().to(device)
+    model.load_state_dict(torch.load(os.path.join('../../checkpoints', model.__class__.__name__ + '_v1_best.pth'), map_location=device)['model_state_dict'])
+    print('load model path : ',os.path.join('../../checkpoints', model.__class__.__name__ + '_v1_best.pth'))
     return model
 
 

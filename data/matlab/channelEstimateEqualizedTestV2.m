@@ -5,17 +5,21 @@ miPyPath = 'C:\Users\stone\AppData\Local\Programs\Python\Python312\python.exe';
 lenPyPath = 'D:\Python\python.exe';
 pyenv('Version', lenPyPath)
 csiFormerModel = py.csiFormer.load_model();
+csiFormerStudentModel = py.csiFormerStudent.load_model();
 csiEncoderModel = py.csiEncoder.load_model();
 % ceeqModel = py.ceeqFormer.load_model();
 eqDnnModel = py.eqDnn.load_model();
 eqDnnProModel = py.eqDnnPro.load_model();
+eqDnnProStudentModel = py.eqDnnProStudent.load_model();
 ceDnnModel = py.ceDnn.load_model();
+
 
 function [csi_est] = csiEncoderInfer(model, csi_ls)
     % 保存原始 csi_ls 的尺寸
     orig_shape = size(csi_ls);
     
     % 拼接实部和虚部，得到新的维度 [orig_shape, 2]
+    
     csi_ls_cat = cat(ndims(csi_ls)+1, real(csi_ls), imag(csi_ls));
     
     % 转换为 Python numpy 数组
@@ -46,6 +50,29 @@ function [csi_est] = csiFormerInfer(model, csi_ls, pre_csi)
     
     % 调用 Python 端的推断函数
     csi_est_py = py.csiFormer.infer(model, csi_ls_py, pre_csi_py);
+    
+    % 将 Python numpy 输出转换为 MATLAB 数组
+    csi_est = double(py.array.array('d', py.numpy.nditer(csi_est_py)));
+    
+    % 重构为与拼接后输入相同的 shape: [orig_shape, 2]
+    csi_est = reshape(csi_est, [orig_shape, 2]);
+
+    csi_est = complex(csi_est(:,:,:,:,1), csi_est(:,:,:,:,2));
+end
+
+function [csi_est] = csiFormerStudentInfer(model, csi_ls, pre_csi)
+    % 保存原始 csi_ls 的尺寸
+    orig_shape = size(csi_ls);
+    
+    % 拼接实部和虚部，得到新的维度 [orig_shape, 2]
+    csi_ls_cat = cat(ndims(csi_ls)+1, real(csi_ls), imag(csi_ls));
+    
+    % 转换为 Python numpy 数组
+    csi_ls_py = py.numpy.array(csi_ls_cat);
+    pre_csi_py = py.numpy.array(pre_csi);
+    
+    % 调用 Python 端的推断函数
+    csi_est_py = py.csiFormerStudent.infer(model, csi_ls_py, pre_csi_py);
     
     % 将 Python numpy 输出转换为 MATLAB 数组
     csi_est = double(py.array.array('d', py.numpy.nditer(csi_est_py)));
@@ -143,6 +170,31 @@ function [equalized_signal] = eqDnnProInfer(model, csi_est, rx_signal)
     equalized_signal = complex(eq_sigal(:,:,:,1), eq_sigal(:,:,:,2));
 end
 
+function [equalized_signal] = eqDnnProStudentInfer(model, csi_est, rx_signal)
+    % 获取参数维度
+    [nsubc, nsym, ntx, nrx] = size(csi_est);  % [nsubc, nsym, ntx, nrx]
+    
+    % 拼接 csi_est 的实部和虚部，在最后一维增加一个维度2
+    csi_est_cat = cat(ndims(csi_est)+1, real(csi_est), imag(csi_est));
+    % 同理，拼接 rx_signal 的实部和虚部
+    rx_signal_cat = cat(ndims(rx_signal)+1, real(rx_signal), imag(rx_signal));
+    
+    % 转换为 Python numpy 数组
+    csi_est_py = py.numpy.array(csi_est_cat);
+    rx_signal_py = py.numpy.array(rx_signal_cat);
+    
+    % 调用 Python 端的推断函数
+    eq_sigal_py = py.eqDnnProStudent.infer(model, csi_est_py, rx_signal_py);
+    
+    % 将 Python numpy 输出转换为 MATLAB 数组（此时数据为一维向量）
+    eq_sigal = double(py.array.array('d', py.numpy.nditer(eq_sigal_py)));
+    
+    % 重构为 [nsubc, nsym, ntx, 2]
+    eq_sigal = reshape(eq_sigal, [nsubc, nsym, ntx, 2]);
+    
+    % 合成复数矩阵：将最后一维中的第1和第2部分分别作为实部和虚部
+    equalized_signal = complex(eq_sigal(:,:,:,1), eq_sigal(:,:,:,2));
+end
 
 %% 参数设置
 % 系统参数配置
@@ -261,11 +313,12 @@ mse_csi_mmse = zeros(length(snrValues), 1);
 mse_csi_csiEncoder = zeros(length(snrValues), 1);
 mse_csi_csiFormer = zeros(length(snrValues), 1);
 
+
 % 信道均衡MSE LOSS 数据对比
 % TODO
 
 % 每个SNR统计子帧的数量
-numCountFrame = 20;                                        
+numCountFrame = 30;                                        
 csiPreTemp = zeros(3, numValidSubc, numSym, numTx, numRx);
 
 for idx = 1:length(snrValues)
@@ -361,7 +414,8 @@ for idx = 1:length(snrValues)
         loss_csiEncoder = loss_csiEncoder + immse(csiEncoder_data, hPerfect);
 
         % csiFormer估计
-        csiFormer_valid = csiFormerInfer(csiFormerModel,csi_ls(validSubcIndices,:,:,:), csiPreTemp(1:2,:,:,:,:,:));
+        % csiFormer_valid = csiFormerInfer(csiFormerModel,csi_ls(validSubcIndices,:,:,:), csiPreTemp(1:2,:,:,:,:,:));
+        csiFormer_valid = csiFormerStudentInfer(csiFormerStudentModel,csi_ls(validSubcIndices,:,:,:), csiPreTemp(1:2,:,:,:,:,:));
 
         csiFormer_data = csiFormer_valid(valid2DataIndices,:,:,:);
         loss_csiFormer = loss_csiFormer + immse(csiFormer_data, hPerfect);
@@ -376,11 +430,11 @@ for idx = 1:length(snrValues)
 
         
         %% 信道均衡
-        % AI eqDnn 理想信道均衡
-        eqSignal_ideal_eqDnn = eqDnnInfer(eqDnnModel, hValid, finalSignal(validSubcIndices,:,:));
-        eqSignal_ideal_eqDnn = eqSignal_ideal_eqDnn(valid2DataIndices,:,:);
-        rxStream_ideal_eqDnn = pskdemod(reshape(eqSignal_ideal_eqDnn, [], 1), M);
-        ser_ideal_eqDnn(idx, :) = er_ideal_eqDnn(txStream, rxStream_ideal_eqDnn);
+        % % AI eqDnn 理想信道均衡
+        % eqSignal_ideal_eqDnn = eqDnnInfer(eqDnnModel, hValid, finalSignal(validSubcIndices,:,:));
+        % eqSignal_ideal_eqDnn = eqSignal_ideal_eqDnn(valid2DataIndices,:,:);
+        % rxStream_ideal_eqDnn = pskdemod(reshape(eqSignal_ideal_eqDnn, [], 1), M);
+        % ser_ideal_eqDnn(idx, :) = er_ideal_eqDnn(txStream, rxStream_ideal_eqDnn);
 
         % AI eqDnnPro 理想信道均衡 
         eqSignal_ideal_eqDnnPro = eqDnnProInfer(eqDnnProModel, hValid, finalSignal(validSubcIndices,:,:));
@@ -393,10 +447,10 @@ for idx = 1:length(snrValues)
         rxStream_Encoder_ls = pskdemod(reshape(eqSignal_csiEncoder_ls, [], 1), M);
         ser_csiEncoder_zf(idx, :) = er_csiEncoder_zf(txStream, rxStream_Encoder_ls);
 
-        % AI csiFormer ZF 信道均衡
-        eqSignal_csiFormer_ls = myZFequalize(csiFormer_data, rxDataSignal);
-        rxStream_csiFormer_ls = pskdemod(reshape(eqSignal_csiFormer_ls, [], 1), M);
-        ser_csiFormer_zf(idx, :) = er_csiFormer_zf(txStream, rxStream_csiFormer_ls);
+        % % AI csiFormer ZF 信道均衡
+        % eqSignal_csiFormer_ls = myZFequalize(csiFormer_data, rxDataSignal);
+        % rxStream_csiFormer_ls = pskdemod(reshape(eqSignal_csiFormer_ls, [], 1), M);
+        % ser_csiFormer_zf(idx, :) = er_csiFormer_zf(txStream, rxStream_csiFormer_ls);
 
         % AI csiFormer MMSE 信道均衡
         eqSignal_csiFormer_mmse = myMMSEequalize(csiFormer_data, rxDataSignal, noiseVar);
@@ -404,7 +458,9 @@ for idx = 1:length(snrValues)
         ser_csiFormer_mmse(idx, :) = er_csiFormer_mmse(txStream, rxStream_csiFormer_mmse);
 
         % AI csiFormer+eqDnn 信道均衡
-        eqSignal_csiFormer_eqDnnPro = eqDnnInfer(eqDnnModel, csiFormer_valid, finalSignal(validSubcIndices,:,:));
+        % eqSignal_csiFormer_eqDnnPro = eqDnnProInfer(eqDnnProModel, csiFormer_valid, finalSignal(validSubcIndices,:,:));
+        eqSignal_csiFormer_eqDnnPro = eqDnnProStudentInfer(eqDnnProStudentModel, csiFormer_valid, finalSignal(validSubcIndices,:,:));
+
         eqSignal_csiFormer_eqDnnPro = eqSignal_csiFormer_eqDnnPro(valid2DataIndices,:,:);
         rxStream_csiFormer_eqDnnPro = pskdemod(reshape(eqSignal_csiFormer_eqDnnPro, [], 1), M);
         ser_csiFormer_eqDnnPro(idx, :) = er_csiFormer_eqDnn(txStream, rxStream_csiFormer_eqDnnPro);
@@ -414,20 +470,20 @@ for idx = 1:length(snrValues)
         rxStream_ideal_mmse = pskdemod(reshape(eqSignal_ideal_mmse, [], 1), M);
         ser_ideal_mmse(idx, :) = er_ideal_mmse(txStream, rxStream_ideal_mmse);
 
-        % LS信道 ZF均衡
-        rxSignal_ls_zf = myZFequalize(csi_ls, rxDataSignal);
-        rxStream_ls_zf = pskdemod(reshape(rxSignal_ls_zf, [],1), M);
-        ser_ls_zf(idx, :) = er_ls_zf(txStream, rxStream_ls_zf);
+        % % LS信道 ZF均衡
+        % rxSignal_ls_zf = myZFequalize(csi_ls, rxDataSignal);
+        % rxStream_ls_zf = pskdemod(reshape(rxSignal_ls_zf, [],1), M);
+        % ser_ls_zf(idx, :) = er_ls_zf(txStream, rxStream_ls_zf);
 
         % LS信道 MMSE均衡
         rxSignal_ls_mmse = myMMSEequalize(csi_ls, rxDataSignal, noiseVar);
         rxStream_ls_mmse = pskdemod(reshape(rxSignal_ls_mmse,[],1),M);
         ser_ls_mmse(idx, :) = er_ls_mmse(txStream, rxStream_ls_mmse);
         
-        % MMSE信道 ZF均衡
-        rxSignal_mmse_zf = myZFequalize(csi_mmse, rxDataSignal);
-        rxStream_mmse_zf = pskdemod(reshape(rxSignal_mmse_zf,[],1),M);
-        ser_mmse_zf(idx, :) = er_mmse_zf(txStream, rxStream_mmse_zf);
+        % % MMSE信道 ZF均衡
+        % rxSignal_mmse_zf = myZFequalize(csi_mmse, rxDataSignal);
+        % rxStream_mmse_zf = pskdemod(reshape(rxSignal_mmse_zf,[],1),M);
+        % ser_mmse_zf(idx, :) = er_mmse_zf(txStream, rxStream_mmse_zf);
 
         % MMSE信道 MMSE均衡
         rxSignal_mmse_mmse = myMMSEequalize(csi_mmse, rxDataSignal, noiseVar);
@@ -535,11 +591,19 @@ hold off;
 % hold off;
 
 
+%% 保存数据
+% 生成时间戳字符串，例如 '20250211_153045'
+timestamp = datestr(now, 'yyyymmdd_HHMMSS');
 
+% 拼接文件名，例如 '20250211_153045.mat'
+filename = [timestamp '.mat'];
 
-
-
-
+% 存数据到文件
+save(filename, ...
+    'ser_ideal_zf', 'ser_ideal_mmse', 'ser_ideal_eqDnn', 'ser_ideal_eqDnnPro', ...
+    'ser_ls_zf', 'ser_ls_mmse', 'ser_mmse_zf', 'ser_mmse_mmse', ...
+    'ser_csiEncoder_zf', 'ser_csiFormer_zf', 'ser_csiFormer_mmse', 'ser_csiFormer_eqDnnPro', ...
+    'mse_csi_ls', 'mse_csi_mmse', 'mse_csi_csiEncoder', 'mse_csi_csiFormer');
 
 
 

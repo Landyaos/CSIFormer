@@ -64,9 +64,9 @@ ofdmMod = comm.OFDMModulator('FFTLength', numSubc, ...
 
 %% 数据集采集
 numFrame = 2;
-snrValues = 15:5:30;
+snrValues = 20:5:30;
 datasetPath = {'../raw/trainDataV4.mat','../raw/valDataV4.mat'};
-datasetConfig = [10000,1000];
+datasetConfig = [12000,2000];
 
 
 error = zeros(length(snrValues),3);
@@ -85,6 +85,11 @@ for datasetIdx = 1:length(datasetPath)
     for snrIdx = 1:length(snrValues)
         snrIdx
         snr = snrValues(snrIdx);
+        minSeed = 0;
+        maxSeed = 2^32 - 1;   % 3.4625e+09 2.4608e+09 4.0359e+09 2.7777e+09
+        
+        seed = randi([minSeed, maxSeed]);
+        seed
         % 信道模型
         mimoChannel = comm.MIMOChannel(...
             'SampleRate', sampleRate, ...
@@ -95,7 +100,10 @@ for datasetIdx = 1:length(datasetPath)
             'NumTransmitAntennas', numTx, ...
             'NumReceiveAntennas', numRx, ...
             'FadingDistribution', 'Rayleigh', ...
-            'PathGainsOutputPort', true);   % 开启路径增益输出
+            'PathGainsOutputPort', true,...
+            'RandomStream', 'mt19937ar with seed', ...  % 使用固定种子的随机数流
+            'Seed', seed);   % 开启路径增益输出
+
         mimoChannelInfo = info(mimoChannel);
         pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
         toffset = mimoChannelInfo.ChannelFilterDelay;        
