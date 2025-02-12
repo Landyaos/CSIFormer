@@ -1,39 +1,76 @@
-clear;
-clc;
-%%
-miPyPath = 'C:\Users\stone\AppData\Local\Programs\Python\Python312\python.exe';
-lenPyPath = 'D:\Python\python.exe';
-pyenv('Version', lenPyPath)
-model = py.eqDnn.load_model();
 
-function [equalized_signal] = eqInfer(model, csi_est, rx_signal)
-    csi_est = py.numpy.array(cat(ndims(csi_est)+1, real(csi_est), imag(csi_est)));
-    rx_signal = py.numpy.array(cat(ndims(rx_signal)+1, real(rx_signal), imag(rx_signal)));
-    
-    equalized_signal = py.eqDnn.infer(model, csi_est, rx_signal, rx_signal);
+filename = '2.mat';
 
-    % 转换 Python numpy 输出为 MATLAB 矩阵
-    equalized_signal = double(py.array.array('d', py.numpy.nditer(equalized_signal)));
-    equalized_signal = reshape(equalized_signal, 224,14,2,2);
-    equalized_signal = complex(equalized_signal(:,:,:,1), equalized_signal(:,:,:,2));
-end
+% 存数据到文件
+load(filename, ...
+    'ser_ideal_zf', 'ser_ideal_mmse', 'ser_ideal_eqDnn', 'ser_ideal_eqDnnPro', ...
+    'ser_ls_zf', 'ser_ls_mmse', 'ser_mmse_zf', 'ser_mmse_mmse', ...
+    'ser_csiEncoder_zf', 'ser_csiFormer_zf', 'ser_csiFormer_mmse', 'ser_csiFormer_eqDnnPro', ...
+    'mse_csi_ls', 'mse_csi_mmse', 'mse_csi_csiEncoder', 'mse_csi_csiFormer');
 
-% 保存批量数据到文件
-load('../raw/eqValData.mat', ...
-    'csiLSData',...
-    'csiPreData',...
-    'csiLabelData', ...
-    'txSignalData',...
-    'rxSignalData');
-idx=10;
-csi_perfect = squeeze(complex(csiLabelData(idx,:,:,:,:,1),csiLabelData(idx,:,:,:,:,2)));
-tx = squeeze(complex(txSignalData(idx,:,:,:,1),txSignalData(idx,:,:,:,2)));
-rx = squeeze(complex(rxSignalData(idx,:,:,:,1),rxSignalData(idx,:,:,:,2)));
+snrValues = 0:5:30;
 
-size(csi_perfect)
+%% 图形绘制部分
+% 手动定义对比鲜明的颜色矩阵
+colors = [
+    0.0000, 0.4470, 0.7410;  % 蓝色 (Blue)
+    0.8500, 0.3250, 0.0980;  % 橙色 (Orange)
+    0.9290, 0.6940, 0.1250;  % 黄色 (Yellow)
+    0.4940, 0.1840, 0.5560;  % 紫色 (Purple)
+    0.4660, 0.6740, 0.1880;  % 绿色 (Green)
+    0.3010, 0.7450, 0.9330;  % 青色 (Cyan)
+    0.6350, 0.0780, 0.1840;  % 红色 (Red)
+];
 
-tx_est = eqInfer(model,csi_perfect,rx);
 
-mean((real(tx_est(:))-real(tx(:))).^2 + (imag(tx_est(:))-imag(tx(:))).^2)
-disp(mean(abs(tx_est(:) - tx(:)).^2))
+% --- 图1：信道估计 MSE LOSS 曲线对比 ---
+figure;
+hold on;
+plot(snrValues, mse_csi_ls,        '-o', 'LineWidth', 1.5, 'DisplayName', 'LS');
+plot(snrValues, mse_csi_mmse,      '-s', 'LineWidth', 1.5, 'DisplayName', 'MMSE');
+plot(snrValues, mse_csi_csiEncoder, '--^', 'LineWidth', 1.5, 'DisplayName', 'AI (csiEncoder)');
+plot(snrValues, mse_csi_csiFormer,  '--d', 'LineWidth', 1.5, 'DisplayName', 'AI (csiFormer)');
 
+
+grid on;
+xlabel('SNR (dB)');
+ylabel('MSE with h_{Perfect}');
+title('MSE vs. SNR for Different Channel Estimation Algorithms');
+legend('Location', 'best');
+hold off;
+
+% --- 图2：信道估计  SER 误码率曲线对比 ---
+figure;
+hold on;
+
+plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect ')
+plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
+plot(snrValues, ser_csiEncoder_zf(:,1),  '--x', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'AI csiEncoder MMSE');
+plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(4,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer MMSE');
+
+grid on;
+xlabel('SNR (dB)');
+ylabel('Symbol Error Rate (SER)');
+title('SER vs. SNR for Different Channel Estimation Algorithms');
+legend('Location', 'best');
+set(gca, 'YScale', 'log');  % Y轴使用对数刻度
+hold off;
+
+% --- 图3：信道估计与信道均衡 SER 误码率曲线 ---
+figure;
+hold on;
+
+plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
+plot(snrValues, ser_ideal_eqDnnPro(:,1),    '-v', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNN');
+plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(5,:),  'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
+plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(4,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
+plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(5,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer MMSE');
+plot(snrValues, ser_csiFormer_eqDnnPro(:,1),'--d', 'Color', colors(6,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer EQDNN');
+
+grid on;
+xlabel('SNR (dB)');
+ylabel('Symbol Error Rate (SER)');
+title('SER vs. SNR for Different Channel Estimation and Equalization Algorithms');
+legend('Location', 'best');
+set(gca, 'YScale', 'log');  % Y轴使用对数刻度
+hold off;
