@@ -32,7 +32,7 @@ class PositionalEncoding(nn.Module):
         pe = pe.unsqueeze(0)  # 增加 batch 维度
         self.register_buffer('pe', pe)
 
-    def forward(self, x):
+    def forward(self, x): 
         """
         :param x: 输入张量 [B, seq_len, d_model]
         :return: 加入位置编码的张量 [B, seq_len, d_model]
@@ -51,7 +51,7 @@ class CSIEncoder(nn.Module):
         :param nhead: 多头注意力头数
         :param n_layers: Transformer 层数
         :param n_tx: 发射天线数
-        :param n_rx: 接收天线数
+        :param n_rx: 接收天线数 
         :param max_len: 序列的最大长度
         """
         super(CSIEncoder, self).__init__()

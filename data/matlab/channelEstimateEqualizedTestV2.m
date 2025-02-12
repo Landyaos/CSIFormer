@@ -7,6 +7,7 @@ pyenv('Version', lenPyPath)
 
 csiEncoderModel = py.csiEncoder.load_model();
 csiFormerModel = py.csiFormer.load_model();
+csiFormerLiteModel = py.csiFormerLite.load_model();
 csiFormerStudentModel = py.csiFormerStudent.load_model();
 
 eqDnnModel = py.eqDnn.load_model();
@@ -51,6 +52,29 @@ function [csi_est] = csiFormerInfer(model, csi_ls, pre_csi)
     
     % 调用 Python 端的推断函数
     csi_est_py = py.csiFormer.infer(model, csi_ls_py, pre_csi_py);
+    
+    % 将 Python numpy 输出转换为 MATLAB 数组
+    csi_est = double(py.array.array('d', py.numpy.nditer(csi_est_py)));
+    
+    % 重构为与拼接后输入相同的 shape: [orig_shape, 2]
+    csi_est = reshape(csi_est, [orig_shape, 2]);
+
+    csi_est = complex(csi_est(:,:,:,:,1), csi_est(:,:,:,:,2));
+end
+
+function [csi_est] = csiFormerLiteInfer(model, csi_ls, pre_csi)
+    % 保存原始 csi_ls 的尺寸
+    orig_shape = size(csi_ls);
+    
+    % 拼接实部和虚部，得到新的维度 [orig_shape, 2]
+    csi_ls_cat = cat(ndims(csi_ls)+1, real(csi_ls), imag(csi_ls));
+    
+    % 转换为 Python numpy 数组
+    csi_ls_py = py.numpy.array(csi_ls_cat);
+    pre_csi_py = py.numpy.array(pre_csi);
+    
+    % 调用 Python 端的推断函数
+    csi_est_py = py.csiFormerLite.infer(model, csi_ls_py, pre_csi_py);
     
     % 将 Python numpy 输出转换为 MATLAB 数组
     csi_est = double(py.array.array('d', py.numpy.nditer(csi_est_py)));
@@ -255,7 +279,7 @@ ofdmMod = comm.OFDMModulator('FFTLength', numSubc, ...
 
 
 minSeed = 0;
-maxSeed = 2^32 - 1;   % 3.4625e+09 2.4608e+09 4.0359e+09 2.7777e+09  3.4992e+09 2.1401e+09
+maxSeed = 2^32 - 1;   % 3.4625e+09 2.4608e+09 4.0359e+09 2.7777e+09  3.4992e+09 2.1401e+09 
 
 
 seed = randi([minSeed, maxSeed]);
@@ -285,29 +309,37 @@ snrValues = 0:3:30;
 % SER 数据对比
 ser_ideal_zf = zeros(length(snrValues), 3);
 ser_ideal_mmse = zeros(length(snrValues), 3);
-ser_ideal_eqDnn = zeros(length(snrValues), 3);
 ser_ideal_eqDnnPro = zeros(length(snrValues), 3);
+
 ser_ls_zf = zeros(length(snrValues), 3);
 ser_ls_mmse = zeros(length(snrValues), 3);
+ser_ls_eqDnnPro = zeros(length(snrValues), 3);
+
 ser_mmse_zf = zeros(length(snrValues), 3);
 ser_mmse_mmse = zeros(length(snrValues), 3);
-ser_csiEncoder_zf = zeros(length(snrValues), 3);
+
+ser_csiEncoder_mmse = zeros(length(snrValues), 3);
+
 ser_csiFormer_zf = zeros(length(snrValues), 3);
 ser_csiFormer_mmse = zeros(length(snrValues), 3);
 ser_csiFormer_eqDnnPro = zeros(length(snrValues), 3);
+
+ser_csiFormerStudent_eqDnnProStudent = zeros(length(snrValues), 3);
+
 
 % 信道估计MSE LOSS 数据对比
 mse_csi_ls = zeros(length(snrValues), 1);
 mse_csi_mmse = zeros(length(snrValues), 1);
 mse_csi_csiEncoder = zeros(length(snrValues), 1);
 mse_csi_csiFormer = zeros(length(snrValues), 1);
+mse_csi_csiFormerStudent = zeros(length(snrValues), 1);
 
 
 % 信道均衡MSE LOSS 数据对比
 % TODO
 
 % 每个SNR统计子帧的数量
-numCountFrame = 30;                                        
+numCountFrame = 1;                                        
 csiPreTemp = zeros(3, numValidSubc, numSym, numTx, numRx);
 
 for idx = 1:length(snrValues)
@@ -317,21 +349,28 @@ for idx = 1:length(snrValues)
     er_ideal_zf = comm.ErrorRate;
     er_ideal_mmse = comm.ErrorRate;
     er_ideal_eqDnn = comm.ErrorRate;
+    
     er_ls_zf = comm.ErrorRate;
     er_ls_mmse = comm.ErrorRate;
+    er_ls_eqDnnPro = comm.ErrorRate;
+
     er_mmse_zf = comm.ErrorRate;
     er_mmse_mmse = comm.ErrorRate;
-    er_csiEncoder_zf = comm.ErrorRate;
+
+    er_csiEncoder_mmse = comm.ErrorRate;
+
     er_csiFormer_zf = comm.ErrorRate;
     er_csiFormer_mmse = comm.ErrorRate;
-    er_csiFormer_eqDnn = comm.ErrorRate;
+    er_csiFormer_eqDnnPro = comm.ErrorRate;
+    
+    er_csiFormerStudent_eqDnnProStudent = comm.ErrorRate;
 
     loss_ls = 0;            % 用于累计LS     的MSE LOSS    
     loss_mmse = 0;          % 用于累计MMSE   的MSE LOSS
     loss_lmmse = 0;         % 用于累计LMMSE  的MSE LOSS
     loss_csiFormer = 0;     % 用于累计AI     的MSE LOSS
     loss_csiEncoder = 0;    % 用于累计AI     的MSE LOSS
-
+    loss_csiFormerStudent = 0; 
     
     for frame = -1:numCountFrame
         % 数据符号生成
@@ -405,9 +444,13 @@ for idx = 1:length(snrValues)
         % csiFormer估计
         csiFormer_valid = csiFormerInfer(csiFormerModel,csi_ls(validSubcIndices,:,:,:), csiPreTemp(1:2,:,:,:,:,:));
         % csiFormer_valid = csiFormerStudentInfer(csiFormerStudentModel,csi_ls(validSubcIndices,:,:,:), csiPreTemp(1:2,:,:,:,:,:));
-
         csiFormer_data = csiFormer_valid(valid2DataIndices,:,:,:);
         loss_csiFormer = loss_csiFormer + immse(csiFormer_data, hPerfect);
+
+        % csiFormerStudent估计
+        csiFormerStudent_valid = csiFormerStudentInfer(csiFormerStudentModel,csi_ls(validSubcIndices,:,:,:), csiPreTemp(1:2,:,:,:,:,:));
+        csiFormerStudent_data = csiFormerStudent_valid(valid2DataIndices,:,:,:);
+        loss_csiFormerStudent = loss_csiFormerStudent + immse(csiFormerStudent_data, hPerfect);
         
         % LS信道估计
         csi_ls = lsChannelEst(rxPilotSignal, pilotSignal, dataIndices, pilotIndices);
@@ -419,24 +462,24 @@ for idx = 1:length(snrValues)
 
         
         %% 信道均衡
-        % % AI eqDnn 理想信道均衡
-        % eqSignal_ideal_eqDnn = eqDnnInfer(eqDnnModel, hValid, finalSignal(validSubcIndices,:,:));
-        % eqSignal_ideal_eqDnn = eqSignal_ideal_eqDnn(valid2DataIndices,:,:);
-        % rxStream_ideal_eqDnn = pskdemod(reshape(eqSignal_ideal_eqDnn, [], 1), M);
-        % ser_ideal_eqDnn(idx, :) = er_ideal_eqDnn(txStream, rxStream_ideal_eqDnn);
-
-        % AI eqDnnPro 理想信道均衡 
+        % 完美信道 eqDnnPro 信道均衡 
+        %                         eqDnnInfer(eqDnnModel, hValid, finalSignal(validSubcIndices,:,:));
         eqSignal_ideal_eqDnnPro = eqDnnProInfer(eqDnnProModel, hValid, finalSignal(validSubcIndices,:,:));
         eqSignal_ideal_eqDnnPro = eqSignal_ideal_eqDnnPro(valid2DataIndices,:,:);
         rxStream_ideal_eqDnnPro = pskdemod(reshape(eqSignal_ideal_eqDnnPro, [], 1), M);
         ser_ideal_eqDnnPro(idx, :) = er_ideal_eqDnn(txStream, rxStream_ideal_eqDnnPro);
         
-        % AI csiEncoder ZF 信道均衡
-        eqSignal_csiEncoder_ls = myMMSEequalize(csiEncoder_data, rxDataSignal, noiseVar);
-        rxStream_Encoder_ls = pskdemod(reshape(eqSignal_csiEncoder_ls, [], 1), M);
-        ser_csiEncoder_zf(idx, :) = er_csiEncoder_zf(txStream, rxStream_Encoder_ls);
+        % 完美信道 MMSE均衡
+        eqSignal_ideal_mmse = ofdmEqualize(rxDataSignal,reshape(hPerfect,[],numTx,numRx), noiseVar, Algorithm="mmse");
+        rxStream_ideal_mmse = pskdemod(reshape(eqSignal_ideal_mmse, [], 1), M);
+        ser_ideal_mmse(idx, :) = er_ideal_mmse(txStream, rxStream_ideal_mmse);
+        
+        % AI csiEncoder MMSE 信道均衡
+        eqSignal_csiEncoder_mmse = myMMSEequalize(csiEncoder_data, rxDataSignal, noiseVar);
+        rxStream_Encoder_mmse = pskdemod(reshape(eqSignal_csiEncoder_mmse, [], 1), M);
+        ser_csiEncoder_mmse(idx, :) = er_csiEncoder_mmse(txStream, rxStream_Encoder_mmse);
 
-        % % AI csiFormer ZF 信道均衡
+        % AI csiFormer ZF 信道均衡
         % eqSignal_csiFormer_ls = myZFequalize(csiFormer_data, rxDataSignal);
         % rxStream_csiFormer_ls = pskdemod(reshape(eqSignal_csiFormer_ls, [], 1), M);
         % ser_csiFormer_zf(idx, :) = er_csiFormer_zf(txStream, rxStream_csiFormer_ls);
@@ -449,15 +492,16 @@ for idx = 1:length(snrValues)
         % AI csiFormer+eqDnn 信道均衡
         eqSignal_csiFormer_eqDnnPro = eqDnnProInfer(eqDnnProModel, csiFormer_valid, finalSignal(validSubcIndices,:,:));
         % eqSignal_csiFormer_eqDnnPro = eqDnnProStudentInfer(eqDnnProStudentModel, csiFormer_valid, finalSignal(validSubcIndices,:,:));
-
         eqSignal_csiFormer_eqDnnPro = eqSignal_csiFormer_eqDnnPro(valid2DataIndices,:,:);
         rxStream_csiFormer_eqDnnPro = pskdemod(reshape(eqSignal_csiFormer_eqDnnPro, [], 1), M);
-        ser_csiFormer_eqDnnPro(idx, :) = er_csiFormer_eqDnn(txStream, rxStream_csiFormer_eqDnnPro);
+        ser_csiFormer_eqDnnPro(idx, :) = er_csiFormer_eqDnnPro(txStream, rxStream_csiFormer_eqDnnPro);
 
-        % 完美信道 MMSE均衡
-        eqSignal_ideal_mmse = ofdmEqualize(rxDataSignal,reshape(hPerfect,[],numTx,numRx), noiseVar, Algorithm="mmse");
-        rxStream_ideal_mmse = pskdemod(reshape(eqSignal_ideal_mmse, [], 1), M);
-        ser_ideal_mmse(idx, :) = er_ideal_mmse(txStream, rxStream_ideal_mmse);
+        % AI csiFormerStudent+eqDnnProStudent 信道均衡
+        eqSignal_csiFormerStudent_eqDnnProStudent = eqDnnProStudentInfer(eqDnnProStudentModel, csiFormer_valid, finalSignal(validSubcIndices,:,:));
+        eqSignal_csiFormerStudent_eqDnnProStudent = eqSignal_csiFormerStudent_eqDnnProStudent(valid2DataIndices,:,:);
+        rxStream_csiFormerStudent_eqDnnProStudent = pskdemod(reshape(eqSignal_csiFormerStudent_eqDnnProStudent, [], 1), M);
+        ser_csiFormerStudent_eqDnnProStudent(idx, :) = er_csiFormerStudent_eqDnnProStudent(txStream, rxStream_csiFormerStudent_eqDnnProStudent);
+
 
         % % LS信道 ZF均衡
         % rxSignal_ls_zf = myZFequalize(csi_ls, rxDataSignal);
@@ -468,7 +512,14 @@ for idx = 1:length(snrValues)
         rxSignal_ls_mmse = myMMSEequalize(csi_ls, rxDataSignal, noiseVar);
         rxStream_ls_mmse = pskdemod(reshape(rxSignal_ls_mmse,[],1),M);
         ser_ls_mmse(idx, :) = er_ls_mmse(txStream, rxStream_ls_mmse);
-        
+
+        %
+        % rxSignal_ls_eqDnnPro = eqDnnProInfer(eqDnnProModel, csi_ls, finalSignal(validSubcIndices,:,:));
+        % rxStream_ls_eqDnnPro = pskdemod(reshape(rxSignal_ls_eqDnnPro,[],1),M);
+        % ser_ls_eqDnnPro(idx, :) = er_ls_eqDnnPro(txStream, rxStream_ls_mmse);
+
+
+
         % % MMSE信道 ZF均衡
         % rxSignal_mmse_zf = myZFequalize(csi_mmse, rxDataSignal);
         % rxStream_mmse_zf = pskdemod(reshape(rxSignal_mmse_zf,[],1),M);
@@ -489,18 +540,20 @@ end
 
 %% 保存数据
 % 生成时间戳字符串，例如 '20250211_153045'
-timestamp = datestr(now, 'yyyymmdd_HHMMSS');
+timestampStr = string(datetime('now','Format','yyyyMMdd_HHmmss'));
 
 % 拼接文件名，例如 '20250211_153045.mat'
-filename = [timestamp '.mat'];
+filename = timestampStr+'.mat';
 
-% 存数据到文件
 save(filename, ...
-    'seed',...
-    'ser_ideal_zf', 'ser_ideal_mmse', 'ser_ideal_eqDnn', 'ser_ideal_eqDnnPro', ...
-    'ser_ls_zf', 'ser_ls_mmse', 'ser_mmse_zf', 'ser_mmse_mmse', ...
-    'ser_csiEncoder_zf', 'ser_csiFormer_zf', 'ser_csiFormer_mmse', 'ser_csiFormer_eqDnnPro', ...
-    'mse_csi_ls', 'mse_csi_mmse', 'mse_csi_csiEncoder', 'mse_csi_csiFormer');
+    'seed', ...
+    'ser_ideal_zf', 'ser_ideal_mmse', 'ser_ideal_eqDnnPro', ...
+    'ser_ls_zf', 'ser_ls_mmse', 'ser_ls_eqDnnPro', ...
+    'ser_mmse_zf', 'ser_mmse_mmse', ...
+    'ser_csiEncoder_mmse', ...
+    'ser_csiFormer_zf', 'ser_csiFormer_mmse', 'ser_csiFormer_eqDnnPro', 'ser_csiFormerStudent_eqDnnProStudent', ...
+    'mse_csi_ls', 'mse_csi_mmse', 'mse_csi_csiEncoder', 'mse_csi_csiFormer', 'mse_csi_csiFormerStudent');
+
 %% 图形绘制部分
 % 手动定义对比鲜明的颜色矩阵
 colors = [
@@ -536,7 +589,7 @@ hold on;
 
 plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect ')
 plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
-plot(snrValues, ser_csiEncoder_zf(:,1),  '--x', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'AI csiEncoder MMSE');
+plot(snrValues, ser_csiEncoder_mmse(:,1),  '--x', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'AI csiEncoder MMSE');
 plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(4,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer MMSE');
 
 grid on;
@@ -556,6 +609,8 @@ plot(snrValues, ser_ideal_eqDnnPro(:,1),    '-v', 'Color', colors(2,:),  'LineWi
 plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(5,:),  'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
 plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(4,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
 plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(5,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer MMSE');
+
+plot(snrValues, ser_csiFormer_eqDnnPro(:,1),'--d', 'Color', colors(6,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer EQDNN');
 plot(snrValues, ser_csiFormer_eqDnnPro(:,1),'--d', 'Color', colors(6,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer EQDNN');
 
 grid on;
@@ -565,6 +620,41 @@ title('SER vs. SNR for Different Channel Estimation and Equalization Algorithms'
 legend('Location', 'best');
 set(gca, 'YScale', 'log');  % Y轴使用对数刻度
 hold off;
+
+% --- 图4：模型压缩与推理加速 MSE LOSS 曲线对比 ---
+figure;
+hold on;
+plot(snrValues, mse_csi_csiEncoder, '--^', 'LineWidth', 1.5, 'DisplayName', 'AI (csiEncoder)');
+plot(snrValues, mse_csi_csiFormer,  '--d', 'LineWidth', 1.5, 'DisplayName', 'AI (csiFormer)');
+plot(snrValues, mse_csi_csiFormerStudent,  '--d', 'LineWidth', 1.5, 'DisplayName', 'AI (csiFormer)');
+
+grid on;
+xlabel('SNR (dB)');
+ylabel('MSE with h_{Perfect}');
+title('MSE vs. SNR for Different Channel Estimation Algorithms');
+legend('Location', 'best');
+hold off;
+
+% --- 图5：模型压缩与推理加速 SER 误码率曲线 ---
+figure;
+hold on;
+
+plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
+plot(snrValues, ser_ideal_eqDnnPro(:,1),    '-v', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNN');
+plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(5,:),  'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
+plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(4,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
+plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(5,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer MMSE');
+plot(snrValues, ser_csiFormer_eqDnnPro(:,1),'--d', 'Color', colors(6,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer EQDNN');
+plot(snrValues, ser_csiFormerStudent_eqDnnProStudent(:,1),'--d', 'Color', colors(6,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer EQDNN');
+
+grid on;
+xlabel('SNR (dB)');
+ylabel('Symbol Error Rate (SER)');
+title('SER vs. SNR for Different Channel Estimation and Equalization Algorithms');
+legend('Location', 'best');
+set(gca, 'YScale', 'log');  % Y轴使用对数刻度
+hold off;
+
 
 
 % 
@@ -576,7 +666,6 @@ hold off;
 % 
 % plot(snrValues, ser_ideal_zf(:,1),       '-o', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect ZF');
 % plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
-% plot(snrValues, ser_ideal_eqDnn(:,1),    '-d', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNN');
 % plot(snrValues, ser_ideal_eqDnnPro(:,1),    '--v', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNNPro');
 % plot(snrValues, ser_ls_zf(:,1),          '-^', 'Color', colors(4,:),  'LineWidth', 1.5, 'DisplayName', 'LS ZF');
 % plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(5,:),  'LineWidth', 1.5, 'DisplayName', 'LS MMSE');

@@ -1,5 +1,5 @@
 
-filename = '2.mat';
+filename = '20250212_203152.mat';
 
 % 存数据到文件
 load(filename, ...
@@ -8,29 +8,29 @@ load(filename, ...
     'ser_csiEncoder_zf', 'ser_csiFormer_zf', 'ser_csiFormer_mmse', 'ser_csiFormer_eqDnnPro', ...
     'mse_csi_ls', 'mse_csi_mmse', 'mse_csi_csiEncoder', 'mse_csi_csiFormer');
 
-snrValues = 0:5:30;
-
+mse_csi_ls
+snrValues = 0:3:30;
+snrValues
 %% 图形绘制部分
 % 手动定义对比鲜明的颜色矩阵
 colors = [
     0.0000, 0.4470, 0.7410;  % 蓝色 (Blue)
-    0.8500, 0.3250, 0.0980;  % 橙色 (Orange)
-    0.9290, 0.6940, 0.1250;  % 黄色 (Yellow)
     0.4940, 0.1840, 0.5560;  % 紫色 (Purple)
+    0.9290, 0.6940, 0.1250;  % 黄色 (Yellow)
+    0.6350, 0.0780, 0.1840;  % 红色 (Red)    
     0.4660, 0.6740, 0.1880;  % 绿色 (Green)
+    0.8500, 0.3250, 0.0980;  % 橙色 (Orange)
     0.3010, 0.7450, 0.9330;  % 青色 (Cyan)
-    0.6350, 0.0780, 0.1840;  % 红色 (Red)
-];
 
+];
 
 % --- 图1：信道估计 MSE LOSS 曲线对比 ---
 figure;
 hold on;
-plot(snrValues, mse_csi_ls,        '-o', 'LineWidth', 1.5, 'DisplayName', 'LS');
-plot(snrValues, mse_csi_mmse,      '-s', 'LineWidth', 1.5, 'DisplayName', 'MMSE');
-plot(snrValues, mse_csi_csiEncoder, '--^', 'LineWidth', 1.5, 'DisplayName', 'AI (csiEncoder)');
-plot(snrValues, mse_csi_csiFormer,  '--d', 'LineWidth', 1.5, 'DisplayName', 'AI (csiFormer)');
-
+plot(snrValues, mse_csi_ls,        '-o', 'Color', colors(1,:), 'LineWidth', 1, 'DisplayName', 'LS');
+plot(snrValues, mse_csi_mmse,      '-d', 'Color', colors(2,:), 'LineWidth', 1, 'DisplayName', 'MMSE');
+plot(snrValues, mse_csi_csiEncoder, '-s', 'Color', colors(3,:), 'LineWidth', 1, 'DisplayName', 'CSIFormer-SignalSlot');
+plot(snrValues, mse_csi_csiFormer,  '-p', 'Color', colors(4,:), 'LineWidth', 1, 'DisplayName', 'CSIFormer-MultiSlot');
 
 grid on;
 xlabel('SNR (dB)');
@@ -43,10 +43,11 @@ hold off;
 figure;
 hold on;
 
-plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect ')
-plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
-plot(snrValues, ser_csiEncoder_zf(:,1),  '--x', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'AI csiEncoder MMSE');
-plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(4,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer MMSE');
+plot(snrValues, ser_ls_mmse(:,1),        '-o', 'Color', colors(5,:),  'LineWidth', 1, 'DisplayName', 'LS');
+plot(snrValues, ser_csiEncoder_zf(:,1),  '-*', 'Color', colors(2,:),  'LineWidth', 0.5, 'DisplayName', 'CSIFormer-SignalSlot');
+plot(snrValues, ser_csiFormer_mmse(:,1), '-p', 'Color', colors(4,:), 'LineWidth', 1.5, 'DisplayName', 'CSIFormer-MultiSlot');
+plot(snrValues, ser_ideal_mmse(:,1),     '-d', 'Color', colors(1,:),  'LineWidth', 1, 'DisplayName', 'Ideal ')
+
 
 grid on;
 xlabel('SNR (dB)');
@@ -56,21 +57,40 @@ legend('Location', 'best');
 set(gca, 'YScale', 'log');  % Y轴使用对数刻度
 hold off;
 
-% --- 图3：信道估计与信道均衡 SER 误码率曲线 ---
+% --- 图3：信道均衡 SER 误码率曲线 ---
 figure;
 hold on;
 
-plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
-plot(snrValues, ser_ideal_eqDnnPro(:,1),    '-v', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNN');
 plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(5,:),  'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
 plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(4,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
-plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(5,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer MMSE');
-plot(snrValues, ser_csiFormer_eqDnnPro(:,1),'--d', 'Color', colors(6,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer EQDNN');
+plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
+plot(snrValues, ser_ideal_eqDnnPro(:,1),    '-v', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNN');
 
 grid on;
 xlabel('SNR (dB)');
 ylabel('Symbol Error Rate (SER)');
-title('SER vs. SNR for Different Channel Estimation and Equalization Algorithms');
+title('SER vs. SNR for Different Channel Equalization Algorithms');
 legend('Location', 'best');
 set(gca, 'YScale', 'log');  % Y轴使用对数刻度
 hold off;
+
+% % --- 图3：信道估计与信道均衡 SER 误码率曲线 ---
+% figure;
+% hold on;
+% 
+% 
+% plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(5,:),  'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
+% plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(4,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
+% plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(5,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer MMSE');
+% plot(snrValues, ser_csiFormer_eqDnnPro(:,1),'--d', 'Color', colors(6,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer EQDNN');
+% plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
+% plot(snrValues, ser_ideal_eqDnnPro(:,1),    '-v', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNN');
+% 
+% 
+% grid on;
+% xlabel('SNR (dB)');
+% ylabel('Symbol Error Rate (SER)');
+% title('SER vs. SNR for Different Channel Estimation and Equalization Algorithms');
+% legend('Location', 'best');
+% set(gca, 'YScale', 'log');  % Y轴使用对数刻度
+% hold off;
