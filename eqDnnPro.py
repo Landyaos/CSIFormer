@@ -303,38 +303,40 @@ def train_model(model, dataloader_train, dataloader_val, criterion, optimizer, s
             }, os.path.join(checkpoint_dir, model.__class__.__name__ + '_epoch_'+str(epoch)+'.pth'))
 
 
-print("load data")
-data_train = hdf5storage.loadmat('/root/autodl-tmp/data/raw/trainData.mat')
-data_val = hdf5storage.loadmat('/root/autodl-tmp/data/raw/valData.mat')
-checkpoint_dir = '/root/autodl-tmp/checkpoints'
-# checkpoint_dir = './checkpoints'
-# data_train = hdf5storage.loadmat('./data/raw/trainData.mat')
-# data_val = hdf5storage.loadmat('./data/raw/valData.mat')
-print("load done")
+if __name__ == '__main__':
 
-dataset_train = dataset_preprocess(data_train)
-dataset_val = dataset_preprocess(data_val)
+    print("load data")
+    data_train = hdf5storage.loadmat('/root/autodl-tmp/data/raw/trainData.mat')
+    data_val = hdf5storage.loadmat('/root/autodl-tmp/data/raw/valData.mat')
+    checkpoint_dir = '/root/autodl-tmp/checkpoints'
+    # checkpoint_dir = './checkpoints'
+    # data_train = hdf5storage.loadmat('./data/raw/trainData.mat')
+    # data_val = hdf5storage.loadmat('./data/raw/valData.mat')
+    print("load done")
 
-model = DNNResEQWithAttention()
-# 计算参数量
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    dataset_train = dataset_preprocess(data_train)
+    dataset_val = dataset_preprocess(data_val)
 
-print(f"Total trainable parameters: {count_parameters(model)}")
-print('train model')
+    model = DNNResEQWithAttention()
+    # 计算参数量
+    def count_parameters(model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    print(f"Total trainable parameters: {count_parameters(model)}")
+    print('train model')
 
 
-# 主函数执行
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(device)
-lr = 1e-3
-epochs = 20
-batch_size = 60
-shuffle_flag = True
-criterion = ComplexMSELoss()
-optimizer = optim.Adam(model.parameters(), lr=lr)
-dataloader_train = DataLoader(dataset=dataset_train, batch_size=batch_size, shuffle=shuffle_flag)
-dataloader_val = DataLoader(dataset=dataset_val, batch_size=batch_size, shuffle=shuffle_flag)
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1)
+    # 主函数执行
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(device)
+    lr = 1e-3
+    epochs = 20
+    batch_size = 60
+    shuffle_flag = True
+    criterion = ComplexMSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    dataloader_train = DataLoader(dataset=dataset_train, batch_size=batch_size, shuffle=shuffle_flag)
+    dataloader_val = DataLoader(dataset=dataset_val, batch_size=batch_size, shuffle=shuffle_flag)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1)
 
-train_model(model, dataloader_train,dataloader_val, criterion, optimizer,scheduler, epochs, device, checkpoint_dir)
+    train_model(model, dataloader_train,dataloader_val, criterion, optimizer,scheduler, epochs, device, checkpoint_dir)

@@ -447,31 +447,33 @@ def train_model(teacher, student, dataloader_train, dataloader_val, criterion, o
             print(f"[INFO] Best model saved at epoch {epoch + 1}, val_loss={val_loss:.4f}")
 
 
-print("load data")
-data_train = hdf5storage.loadmat('/root/autodl-tmp/data/raw/trainDataV4.mat')
-data_val = hdf5storage.loadmat('/root/autodl-tmp/data/raw/valDataV4.mat')
-checkpoint_dir = '/root/autodl-tmp/checkpoints'
-print("load done")
+if __name__ == '__main__':
 
-# 主函数执行
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(device)
-lr = 1e-3
-epochs = 20
-batch_size = 36
-shuffle_flag = True
+    print("load data")
+    data_train = hdf5storage.loadmat('/root/autodl-tmp/data/raw/trainDataV4.mat')
+    data_val = hdf5storage.loadmat('/root/autodl-tmp/data/raw/valDataV4.mat')
+    checkpoint_dir = '/root/autodl-tmp/checkpoints'
+    print("load done")
 
-dataset_train = dataset_preprocess(data_train)
-dataset_val = dataset_preprocess(data_val)
-criterion = DistillationLoss()
-optimizer = optim.Adam(student.parameters(), lr=lr)
-dataloader_train = DataLoader(dataset=dataset_train, batch_size=batch_size, shuffle=shuffle_flag, num_workers=4)
-dataloader_val = DataLoader(dataset=dataset_val, batch_size=batch_size, shuffle=shuffle_flag, num_workers=4)
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1)
+    # 主函数执行
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(device)
+    lr = 1e-3
+    epochs = 20
+    batch_size = 36
+    shuffle_flag = True
+
+    dataset_train = dataset_preprocess(data_train)
+    dataset_val = dataset_preprocess(data_val)
+    criterion = DistillationLoss()
+    optimizer = optim.Adam(student.parameters(), lr=lr)
+    dataloader_train = DataLoader(dataset=dataset_train, batch_size=batch_size, shuffle=shuffle_flag, num_workers=4)
+    dataloader_val = DataLoader(dataset=dataset_val, batch_size=batch_size, shuffle=shuffle_flag, num_workers=4)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1)
 
 
-print('train model')
-train_model(teacher, student, dataloader_train,dataloader_val, criterion, optimizer,scheduler, epochs, device, checkpoint_dir)
+    print('train model')
+    train_model(teacher, student, dataloader_train,dataloader_val, criterion, optimizer,scheduler, epochs, device, checkpoint_dir)
 
 
 
