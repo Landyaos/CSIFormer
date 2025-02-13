@@ -570,11 +570,10 @@ colors = [
 % --- 图1：信道估计 MSE LOSS 曲线对比 ---
 figure;
 hold on;
-plot(snrValues, mse_csi_ls,        '-o', 'LineWidth', 1.5, 'DisplayName', 'LS');
-plot(snrValues, mse_csi_mmse,      '-s', 'LineWidth', 1.5, 'DisplayName', 'MMSE');
-plot(snrValues, mse_csi_csiEncoder, '--^', 'LineWidth', 1.5, 'DisplayName', 'AI (csiEncoder)');
-plot(snrValues, mse_csi_csiFormer,  '--d', 'LineWidth', 1.5, 'DisplayName', 'AI (csiFormer)');
-
+plot(snrValues, mse_csi_ls,        '-o', 'Color', colors(1,:), 'LineWidth', 1, 'DisplayName', 'LS');
+plot(snrValues, mse_csi_mmse,      '-d', 'Color', colors(2,:), 'LineWidth', 1, 'DisplayName', 'MMSE');
+plot(snrValues, mse_csi_csiEncoder, '-s', 'Color', colors(3,:), 'LineWidth', 1, 'DisplayName', 'CSIFormer-SignalSlot');
+plot(snrValues, mse_csi_csiFormer,  '-p', 'Color', colors(4,:), 'LineWidth', 1, 'DisplayName', 'CSIFormer-MultiSlot');
 
 grid on;
 xlabel('SNR (dB)');
@@ -582,6 +581,7 @@ ylabel('MSE with h_{Perfect}');
 title('MSE vs. SNR for Different Channel Estimation Algorithms');
 legend('Location', 'best');
 hold off;
+
 
 % --- 图2：信道估计  SER 误码率曲线对比 ---
 figure;

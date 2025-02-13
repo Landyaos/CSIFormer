@@ -1,26 +1,30 @@
+clear;
+clc;
+filename = '20250213_124427.mat';
 
-filename = '20250212_203152.mat';
-
-% 存数据到文件
 load(filename, ...
-    'ser_ideal_zf', 'ser_ideal_mmse', 'ser_ideal_eqDnn', 'ser_ideal_eqDnnPro', ...
-    'ser_ls_zf', 'ser_ls_mmse', 'ser_mmse_zf', 'ser_mmse_mmse', ...
-    'ser_csiEncoder_zf', 'ser_csiFormer_zf', 'ser_csiFormer_mmse', 'ser_csiFormer_eqDnnPro', ...
-    'mse_csi_ls', 'mse_csi_mmse', 'mse_csi_csiEncoder', 'mse_csi_csiFormer');
+    'seed', ...
+    'ser_ideal_zf', 'ser_ideal_mmse', 'ser_ideal_eqDnnPro', ...
+    'ser_ls_zf', 'ser_ls_mmse', 'ser_ls_eqDnnPro', ...
+    'ser_mmse_zf', 'ser_mmse_mmse', ...
+    'ser_csiEncoder_mmse', ...
+    'ser_csiFormer_zf', 'ser_csiFormer_mmse', 'ser_csiFormer_eqDnnPro', 'ser_csiFormerStudent_eqDnnProStudent', ...
+    'mse_csi_ls', 'mse_csi_mmse', 'mse_csi_csiEncoder', 'mse_csi_csiFormer', 'mse_csi_csiFormerStudent');
 
-mse_csi_ls
 snrValues = 0:3:30;
-snrValues
+
 %% 图形绘制部分
 % 手动定义对比鲜明的颜色矩阵
 colors = [
     0.0000, 0.4470, 0.7410;  % 蓝色 (Blue)
-    0.4940, 0.1840, 0.5560;  % 紫色 (Purple)
+
     0.9290, 0.6940, 0.1250;  % 黄色 (Yellow)
+        0.4660, 0.6740, 0.1880;  % 绿色 (Green)
+
     0.6350, 0.0780, 0.1840;  % 红色 (Red)    
-    0.4660, 0.6740, 0.1880;  % 绿色 (Green)
+        0.3010, 0.7450, 0.9330;  % 青色 (Cyan)
     0.8500, 0.3250, 0.0980;  % 橙色 (Orange)
-    0.3010, 0.7450, 0.9330;  % 青色 (Cyan)
+    0.4940, 0.1840, 0.5560;  % 紫色 (Purple)
 
 ];
 
@@ -43,10 +47,10 @@ hold off;
 figure;
 hold on;
 
-plot(snrValues, ser_ls_mmse(:,1),        '-o', 'Color', colors(5,:),  'LineWidth', 1, 'DisplayName', 'LS');
-plot(snrValues, ser_csiEncoder_zf(:,1),  '-*', 'Color', colors(2,:),  'LineWidth', 0.5, 'DisplayName', 'CSIFormer-SignalSlot');
+plot(snrValues, ser_ls_mmse(:,1),        '-o', 'Color', colors(1,:),  'LineWidth', 1, 'DisplayName', 'LS');
+plot(snrValues, ser_csiEncoder_mmse(:,1),  '-*', 'Color', colors(2,:),  'LineWidth', 0.5, 'DisplayName', 'CSIFormer-SignalSlot');
 plot(snrValues, ser_csiFormer_mmse(:,1), '-p', 'Color', colors(4,:), 'LineWidth', 1.5, 'DisplayName', 'CSIFormer-MultiSlot');
-plot(snrValues, ser_ideal_mmse(:,1),     '-d', 'Color', colors(1,:),  'LineWidth', 1, 'DisplayName', 'Ideal ')
+plot(snrValues, ser_ideal_mmse(:,1),     '-d', 'Color', colors(3,:),  'LineWidth', 1, 'DisplayName', 'Ideal ')
 
 
 grid on;
@@ -61,10 +65,10 @@ hold off;
 figure;
 hold on;
 
-plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(5,:),  'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
-plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(4,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
-plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
-plot(snrValues, ser_ideal_eqDnnPro(:,1),    '-v', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNN');
+plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(1,:),  'LineWidth', 1, 'DisplayName', 'LS MMSE');
+plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(2,:),  'LineWidth', 1, 'DisplayName', 'MMSE MMSE');
+plot(snrValues, ser_ideal_eqDnnPro(:,1), '-v', 'Color', colors(4,:),  'LineWidth', 1.5, 'DisplayName', 'Ideal EQDNN');
+plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(3,:),  'LineWidth', 1, 'DisplayName', 'Ideal MMSE');
 
 grid on;
 xlabel('SNR (dB)');
