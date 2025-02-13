@@ -15,9 +15,9 @@ M = 4;                                           % QPSK 调制（M=4）
 
 % 信道模型配置
 sampleRate = 15.36e6;                            % 采样率
-pathDelays = [0, 30, 70, 90, 110, 190, 410] * 1e-9;  % 路径时延
-averagePathGains = [0, -1.0, -2.0, -3.0, -8.0, -17.2, -20.8];  % 平均路径增益
-maxDopplerShift = 100;                           % 最大多普勒频移
+pathDelays = [0, 30, 150, 310, 370, 710, 1090, 1730, 2510] * 1e-9;  % 转换为秒
+averagePathGains = [0.0, -1.5, -1.4, -3.6, -0.6, -9.1, -7.0, -12.0, -16.9];  % dB
+maxDopplerShift = 200;                                                                    % 最大多普勒频移
 
 % 信号导频分布配置
 validSubcIndices = setdiff((numGuardBands(1)+1):(numSubc-numGuardBands(2)), numSubc/2+1);
@@ -130,6 +130,9 @@ end
 
 %% 绘制幅度与相位（解包后）的变化
 figure;
+% 设置大标题
+
+sgtitle('信道模型: Extended Vehicular A model (EVA) 多普勒-300Hz');
 subplot(2,1,1);
 plot(1:numFrames, abs(hContinuous), '-o');
 xlabel('帧索引');

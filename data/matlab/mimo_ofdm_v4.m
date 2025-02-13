@@ -19,9 +19,16 @@ sampleRate = 15.36e6;                                                           
 t_rms = 2e-6/sqrt(2);                                                                    % 均方根时延
 power_r = 2;                                                                             % 导频功率
 delta_f = sampleRate/numSubc;                                                            % 子载波间隔
+
+% EPA（Extended Pedestrian A）信道参数
 pathDelays = [0, 30, 70, 90, 110, 190, 410] * 1e-9;                                       % 路径时延
 averagePathGains = [0, -1.0, -2.0, -3.0, -8.0, -17.2, -20.8];                             % 平均路径增益
 maxDopplerShift = 5.5;                                                                    % 最大多普勒频移
+
+% EPA (Extended Vehicular A) 信道参数
+pathDelays = [0, 30, 150, 310, 370, 710, 1090, 1730, 2510] * 1e-9;  % 转换为秒
+averagePathGains = [0.0, -1.5, -1.4, -3.6, -0.6, -9.1, -7.0, -12.0, -16.9];  % dB
+maxDopplerShift = 200;                                                                    % 最大多普勒频移
 
 % 信号导频分布配置
 validSubcIndices = setdiff((numGuardBands(1)+1):(numSubc-numGuardBands(2)), numSubc/2+1);
