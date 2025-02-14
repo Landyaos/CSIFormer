@@ -81,6 +81,7 @@ mimoChannel = comm.MIMOChannel(...
     'Seed', seed);
 
 mimoChannelInfo = info(mimoChannel);
+
 pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
 toffset = mimoChannelInfo.ChannelFilterDelay;
 
