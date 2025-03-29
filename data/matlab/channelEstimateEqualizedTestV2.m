@@ -15,6 +15,8 @@ eqDnnProModel = py.eqDnnPro.load_model();
 eqDnnProStudentModel = py.eqDnnProStudent.load_model();
 ceDnnModel = py.ceDnn.load_model();
 
+deeprxModel = py.deepRx.load_model();
+channelformerModel = py.channelformer.load_model();
 
 function [csi_est] = csiEncoderInfer(model, csi_ls)
     % 保存原始 csi_ls 的尺寸
@@ -98,6 +100,28 @@ function [csi_est] = csiFormerStudentInfer(model, csi_ls, pre_csi)
     
     % 调用 Python 端的推断函数
     csi_est_py = py.csiFormerStudent.infer(model, csi_ls_py, pre_csi_py);
+    
+    % 将 Python numpy 输出转换为 MATLAB 数组
+    csi_est = double(py.array.array('d', py.numpy.nditer(csi_est_py)));
+    
+    % 重构为与拼接后输入相同的 shape: [orig_shape, 2]
+    csi_est = reshape(csi_est, [orig_shape, 2]);
+
+    csi_est = complex(csi_est(:,:,:,:,1), csi_est(:,:,:,:,2));
+end
+
+function [csi_est] = channelformerInfer(model, csi_ls)
+    % 保存原始 csi_ls 的尺寸
+    orig_shape = size(csi_ls);
+    
+    % 拼接实部和虚部，得到新的维度 [orig_shape, 2]
+    csi_ls_cat = cat(ndims(csi_ls)+1, real(csi_ls), imag(csi_ls));
+    
+    % 转换为 Python numpy 数组
+    csi_ls_py = py.numpy.array(csi_ls_cat);
+    
+    % 调用 Python 端的推断函数
+    csi_est_py = py.channelformer.infer(model, csi_ls_py);
     
     % 将 Python numpy 输出转换为 MATLAB 数组
     csi_est = double(py.array.array('d', py.numpy.nditer(csi_est_py)));
@@ -197,6 +221,37 @@ function [equalized_signal] = eqDnnProStudentInfer(model, csi_est, rx_signal)
     
     % 调用 Python 端的推断函数
     eq_sigal_py = py.eqDnnProStudent.infer(model, csi_est_py, rx_signal_py);
+    
+    % 将 Python numpy 输出转换为 MATLAB 数组（此时数据为一维向量）
+    eq_sigal = double(py.array.array('d', py.numpy.nditer(eq_sigal_py)));
+    
+    % 重构为 [nsubc, nsym, ntx, 2]
+    eq_sigal = reshape(eq_sigal, [nsubc, nsym, ntx, 2]);
+    
+    % 合成复数矩阵：将最后一维中的第1和第2部分分别作为实部和虚部
+    equalized_signal = complex(eq_sigal(:,:,:,1), eq_sigal(:,:,:,2));
+end
+
+
+function [equalized_signal] = deeprxInfer(model, csi_ls, tx_signal, rx_signal)
+    % 获取参数维度
+    [nsubc, nsym, ntx, nrx] = size(csi_ls);  % [nsubc, nsym, ntx, nrx]
+    
+    % 拼接 csi_est 的实部和虚部，在最后一维增加一个维度2
+    csi_ls_cat = cat(ndims(csi_ls)+1, real(csi_ls), imag(csi_ls));
+    % 同理，拼接 rx_signal 的实部和虚部
+    rx_signal_cat = cat(ndims(rx_signal)+1, real(rx_signal), imag(rx_signal));
+
+    tx_signal_cat = cat(ndims(tx_signal)+1, real(tx_signal), imag(tx_signal));
+
+    % 转换为 Python numpy 数组
+    csi_ls_py = py.numpy.array(csi_ls_cat);
+    rx_signal_py = py.numpy.array(rx_signal_cat);
+    tx_signal_py = py.numpy.array(tx_signal_cat);
+
+    
+    % 调用 Python 端的推断函数
+    eq_sigal_py = py.deepRx.infer(model, csi_ls_py, tx_signal_py, rx_signal_py);
     
     % 将 Python numpy 输出转换为 MATLAB 数组（此时数据为一维向量）
     eq_sigal = double(py.array.array('d', py.numpy.nditer(eq_sigal_py)));
@@ -325,6 +380,10 @@ ser_csiFormer_zf = zeros(length(snrValues), 3);
 ser_csiFormer_mmse = zeros(length(snrValues), 3);
 ser_csiFormer_eqDnnPro = zeros(length(snrValues), 3);
 
+ser_channelformer_mmse = zeros(length(snrValues), 3);
+
+ser_deeprx = zeros(length(snrValues), 3);
+
 ser_csiFormerStudent_eqDnnProStudent = zeros(length(snrValues), 3);
 
 
@@ -334,6 +393,8 @@ mse_csi_mmse = zeros(length(snrValues), 1);
 mse_csi_csiEncoder = zeros(length(snrValues), 1);
 mse_csi_csiFormer = zeros(length(snrValues), 1);
 mse_csi_csiFormerStudent = zeros(length(snrValues), 1);
+
+mse_csi_channelformer = zeros(length(snrValues), 1);
 
 
 % 信道均衡MSE LOSS 数据对比
@@ -366,13 +427,18 @@ for idx = 1:length(snrValues)
     
     er_csiFormerStudent_eqDnnProStudent = comm.ErrorRate;
 
+    er_channelformer_mmse = comm.ErrorRate;
+    er_deeprx = comm.ErrorRate;
+
+
     loss_ls = 0;            % 用于累计LS     的MSE LOSS    
     loss_mmse = 0;          % 用于累计MMSE   的MSE LOSS
     loss_lmmse = 0;         % 用于累计LMMSE  的MSE LOSS
     loss_csiFormer = 0;     % 用于累计AI     的MSE LOSS
     loss_csiEncoder = 0;    % 用于累计AI     的MSE LOSS
     loss_csiFormerStudent = 0; 
-    
+    loss_channelformer = 0;
+
     for frame = -1:numCountFrame
         % 数据符号生成
         txStream = randi([0 M-1], numFrameSymbols, 1); 
@@ -447,12 +513,17 @@ for idx = 1:length(snrValues)
         % csiFormer_valid = csiFormerStudentInfer(csiFormerStudentModel,csi_ls(validSubcIndices,:,:,:), csiPreTemp(1:2,:,:,:,:,:));
         csiFormer_data = csiFormer_valid(valid2DataIndices,:,:,:);
         loss_csiFormer = loss_csiFormer + immse(csiFormer_data, hPerfect);
-
+        
         % csiFormerStudent估计
         csiFormerStudent_valid = csiFormerStudentInfer(csiFormerStudentModel,csi_ls(validSubcIndices,:,:,:), csiPreTemp(1:2,:,:,:,:,:));
         csiFormerStudent_data = csiFormerStudent_valid(valid2DataIndices,:,:,:);
         loss_csiFormerStudent = loss_csiFormerStudent + immse(csiFormerStudent_data, hPerfect);
         
+        % channelformer估计
+        channelformer_valid = channelformerInfer(channelformerModel,csi_ls(validSubcIndices,:,:,:));
+        channelformer_data = channelformer_valid(valid2DataIndices,:,:,:);
+        loss_channelformer = loss_channelformer + immse(channelformer_data, hPerfect);
+
         % LS信道估计
         csi_ls = lsChannelEst(rxPilotSignal, pilotSignal, dataIndices, pilotIndices);
         loss_ls = loss_ls + immse(csi_ls, hPerfect);
@@ -463,6 +534,13 @@ for idx = 1:length(snrValues)
 
         
         %% 信道均衡
+
+        % deeprx 均衡
+        eqSignal_deeprx = deeprxInfer(deeprxModel, csi_ls(validSubcIndices,:,:,:), originSignal(validSubcIndices,:,:), finalSignal(validSubcIndices,:,:));
+        eqSignal_deeprx = eqSignal_deeprx(valid2DataIndices,:,:);
+        rxStream_deeprx = pskdemod(reshape(eqSignal_deeprx, [], 1), M);
+        ser_deeprx(idx, :) = er_deeprx(txStream, rxStream_deeprx);
+
         % 完美信道 eqDnnPro 信道均衡 
         %                         eqDnnInfer(eqDnnModel, hValid, finalSignal(validSubcIndices,:,:));
         eqSignal_ideal_eqDnnPro = eqDnnProInfer(eqDnnProModel, hValid, finalSignal(validSubcIndices,:,:));
@@ -502,7 +580,7 @@ for idx = 1:length(snrValues)
         eqSignal_csiFormerStudent_eqDnnProStudent = eqSignal_csiFormerStudent_eqDnnProStudent(valid2DataIndices,:,:);
         rxStream_csiFormerStudent_eqDnnProStudent = pskdemod(reshape(eqSignal_csiFormerStudent_eqDnnProStudent, [], 1), M);
         ser_csiFormerStudent_eqDnnProStudent(idx, :) = er_csiFormerStudent_eqDnnProStudent(txStream, rxStream_csiFormerStudent_eqDnnProStudent);
-
+       
 
         % % LS信道 ZF均衡
         % rxSignal_ls_zf = myZFequalize(csi_ls, rxDataSignal);
@@ -518,8 +596,6 @@ for idx = 1:length(snrValues)
         % rxSignal_ls_eqDnnPro = eqDnnProInfer(eqDnnProModel, csi_ls, finalSignal(validSubcIndices,:,:));
         % rxStream_ls_eqDnnPro = pskdemod(reshape(rxSignal_ls_eqDnnPro,[],1),M);
         % ser_ls_eqDnnPro(idx, :) = er_ls_eqDnnPro(txStream, rxStream_ls_mmse);
-
-
 
         % % MMSE信道 ZF均衡
         % rxSignal_mmse_zf = myZFequalize(csi_mmse, rxDataSignal);
@@ -537,6 +613,7 @@ for idx = 1:length(snrValues)
     mse_csi_mmse(idx) = loss_mmse / numCountFrame;
     mse_csi_csiFormer(idx) = loss_csiFormer / numCountFrame;
     mse_csi_csiEncoder(idx) = loss_csiEncoder / numCountFrame;
+    mse_csi_channelformer(idx) = loss_channelformer / numCountFrame;
 end
 
 %% 保存数据
@@ -573,8 +650,10 @@ figure;
 hold on;
 plot(snrValues, mse_csi_ls,        '-o', 'Color', colors(1,:), 'LineWidth', 1, 'DisplayName', 'LS');
 plot(snrValues, mse_csi_mmse,      '-d', 'Color', colors(2,:), 'LineWidth', 1, 'DisplayName', 'MMSE');
-plot(snrValues, mse_csi_csiEncoder, '-s', 'Color', colors(3,:), 'LineWidth', 1, 'DisplayName', 'CSIFormer-SignalSlot');
-plot(snrValues, mse_csi_csiFormer,  '-p', 'Color', colors(4,:), 'LineWidth', 1, 'DisplayName', 'CSIFormer-MultiSlot');
+plot(snrValues, mse_csi_csiEncoder, '-s', 'Color', colors(3,:), 'LineWidth', 1, 'DisplayName', 'CSIEncoder');
+plot(snrValues, mse_csi_channelformer, '-d', 'Color', colors(5,:), 'LineWidth', 1, 'DisplayName', 'Channelformer');
+plot(snrValues, mse_csi_csiFormer,  '-p', 'Color', colors(4,:), 'LineWidth', 1, 'DisplayName', 'CSIFormer');
+
 
 grid on;
 xlabel('SNR (dB)');
@@ -589,9 +668,10 @@ figure;
 hold on;
 
 plot(snrValues, ser_ls_mmse(:,1),        '-o', 'Color', colors(1,:),  'LineWidth', 1, 'DisplayName', 'LS');
-plot(snrValues, ser_csiEncoder_mmse(:,1),  '-*', 'Color', colors(2,:),  'LineWidth', 0.5, 'DisplayName', 'CSIFormer-SignalSlot');
-plot(snrValues, ser_csiFormer_mmse(:,1), '-p', 'Color', colors(4,:), 'LineWidth', 1.5, 'DisplayName', 'CSIFormer-MultiSlot');
-plot(snrValues, ser_ideal_mmse(:,1),     '-d', 'Color', colors(3,:),  'LineWidth', 1, 'DisplayName', 'Ideal ')
+plot(snrValues, ser_csiEncoder_mmse(:,1),  '-*', 'Color', colors(2,:),  'LineWidth', 0.5, 'DisplayName', 'CSIEncoder');
+plot(snrValues, ser_channelformer_mmse,  '-s', 'Color', colors(5,:),  'LineWidth', 0.5, 'DisplayName', 'Channelformer');
+plot(snrValues, ser_csiFormer_mmse(:,1), '-p', 'Color', colors(4,:), 'LineWidth', 1.5, 'DisplayName', 'CSIFormer');
+plot(snrValues, ser_ideal_mmse(:,1),     '-d', 'Color', colors(3,:),  'LineWidth', 1, 'DisplayName', 'Ideal')
 
 
 grid on;
@@ -606,10 +686,12 @@ hold off;
 figure;
 hold on;
 
-plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(1,:),  'LineWidth', 1, 'DisplayName', 'LS MMSE');
-plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(2,:),  'LineWidth', 1, 'DisplayName', 'MMSE MMSE');
-plot(snrValues, ser_ideal_eqDnnPro(:,1), '-v', 'Color', colors(4,:),  'LineWidth', 1.5, 'DisplayName', 'Ideal EQDNN');
-plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(3,:),  'LineWidth', 1, 'DisplayName', 'Ideal MMSE');
+plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(1,:),  'LineWidth', 1, 'DisplayName', 'LS+MMSE');
+plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(2,:),  'LineWidth', 1, 'DisplayName', 'LMMSE+MMSE');
+plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(3,:),  'LineWidth', 1, 'DisplayName', 'Ideal+MMSE');
+plot(snrValues, ser_deeprx(:,1),     '-d', 'Color', colors(5,:),  'LineWidth', 1, 'DisplayName', 'DeepRx');
+plot(snrValues, ser_ideal_eqDnnPro(:,1), '-v', 'Color', colors(4,:),  'LineWidth', 1.5, 'DisplayName', 'Ideal+EQAttentiion');
+
 
 grid on;
 xlabel('SNR (dB)');
@@ -623,13 +705,12 @@ hold off;
 figure;
 hold on;
 
-
-plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
-plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
-plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(6,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer MMSE');
-plot(snrValues, ser_csiFormer_eqDnnPro(:,1),'--d', 'Color', colors(4,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer EQDNN');
-plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(5,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
-plot(snrValues, ser_ideal_eqDnnPro(:,1),    '-v', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNN');
+plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'LS+MMSE');
+plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE+MMSE');
+plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(6,:), 'LineWidth', 1.5, 'DisplayName', 'CSIFormer+MMSE');
+plot(snrValues, ser_csiFormer_eqDnnPro(:,1),'--d', 'Color', colors(4,:), 'LineWidth', 1.5, 'DisplayName', 'JointCEEQ');
+plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(5,:),  'LineWidth', 1.5, 'DisplayName', 'Ideal+MMSE');
+plot(snrValues, ser_ideal_eqDnnPro(:,1),    '-v', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'Ideal+EQAttention');
 
 grid on;
 xlabel('SNR (dB)');
@@ -644,8 +725,9 @@ hold off;
 figure;
 hold on;
 plot(snrValues, mse_csi_ls, '-o', 'Color', colors(1,:), 'LineWidth', 1, 'DisplayName', 'LS');
-plot(snrValues, mse_csi_csiEncoder, '-^', 'Color', colors(2,:), 'LineWidth', 1, 'DisplayName', 'CSIFormer-SigleSlot');
-plot(snrValues, mse_csi_csiFormer,  '-d', 'Color', colors(3,:), 'LineWidth', 1, 'DisplayName', 'CSIFormer-MultiSlot');
+plot(snrValues, mse_csi_csiEncoder, '-^', 'Color', colors(2,:), 'LineWidth', 1, 'DisplayName', 'CSIEncoder');
+plot(snrValues, mse_csi_channelformer, '-s', 'Color', colors(5,:), 'LineWidth', 1, 'DisplayName', 'Channelformer');
+plot(snrValues, mse_csi_csiFormer,  '-d', 'Color', colors(3,:), 'LineWidth', 1, 'DisplayName', 'CSIFormer');
 plot(snrValues, mse_csi_csiFormerStudent,  '-p', 'Color', colors(4,:), 'LineWidth', 1, 'DisplayName', 'CSIFormerStudent');
 
 grid on;
@@ -658,11 +740,12 @@ hold off;
 % --- 图6：模型压缩与推理加速 SER 误码率曲线 ---
 figure;
 hold on;
-plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(1,:),  'LineWidth', 0.5, 'DisplayName', 'LS MMSE');
-plot(snrValues, ser_csiFormer_mmse(:,1), '-s', 'Color', colors(2,:), 'LineWidth', 0.5, 'DisplayName', 'CSIFormer MMSE');
-plot(snrValues, ser_csiFormer_eqDnnPro(:,1),'-d', 'Color', colors(3,:), 'LineWidth', 0.5, 'DisplayName', 'CSIFormer EQDNN Teacher');
-plot(snrValues, ser_csiFormerStudent_eqDnnProStudent(:,1),'-d', 'Color', colors(4,:), 'LineWidth', 1.5, 'DisplayName', 'CSIFormer EQDNN Student');
-plot(snrValues, ser_ideal_eqDnnPro(:,1),    '-v', 'Color', colors(5,:),  'LineWidth', 0.5, 'DisplayName', 'Ideal EQDNN');
+plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(1,:),  'LineWidth', 0.5, 'DisplayName', 'LS+MMSE');
+plot(snrValues, ser_csiFormer_mmse(:,1), '-s', 'Color', colors(2,:), 'LineWidth', 0.5, 'DisplayName', 'CSIFormer+MMSE');
+plot(snrValues, ser_deeprx(:,1),    '-v', 'Color', colors(6,:),  'LineWidth', 0.5, 'DisplayName', 'DeepRx');
+plot(snrValues, ser_csiFormerStudent_eqDnnProStudent(:,1),'-d', 'Color', colors(4,:), 'LineWidth', 1.5, 'DisplayName', 'JointCEEQStudent');
+plot(snrValues, ser_csiFormer_eqDnnPro(:,1),'-d', 'Color', colors(3,:), 'LineWidth', 0.5, 'DisplayName', 'JointCEEQTeacher');
+plot(snrValues, ser_ideal_eqDnnPro(:,1),    '-v', 'Color', colors(5,:),  'LineWidth', 0.5, 'DisplayName', 'Ideal+EQAttention');
 
 grid on;
 xlabel('SNR (dB)');
