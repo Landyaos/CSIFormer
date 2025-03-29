@@ -37,79 +37,63 @@ class MIMODataset(Dataset):
             self.tx_signal[idx]                # [S, F, Nt, 2] - Target
         )
 
-class DepthwiseSeparableConv2d(nn.Module):
-    """
-    Depthwise Separable Convolution as used in the paper (implied) and Xception/MobileNet.
-    Uses depth_multiplier=1 as a base, similar to standard MobileNet blocks.
-    The paper mentions a multiplier of 2, which would mean doubling channels in depthwise.
-    Here we implement the more standard version first.
-    """
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, bias=False):
-        super().__init__()
-        # Note: Paper uses (3,3) filters mostly. Dilation is applied.
-        # Padding needs to be calculated to keep dimensions same: padding = (kernel_size - 1) * dilation // 2
-        effective_kernel_size = (kernel_size - 1) * dilation + 1
-        padding = effective_kernel_size // 2
 
-        self.depthwise = nn.Conv2d(in_channels, in_channels, kernel_size, stride=stride,
-                                   padding=padding, dilation=dilation, groups=in_channels, bias=bias)
-        self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1,
-                                   padding=0, bias=bias)
-
-    def forward(self, x):
-        x = self.depthwise(x)
-        x = self.pointwise(x)
-        return x
+# DepthwiseSeparableConv2d remains the same conceptually,
+# but we implement its logic directly inside ResNetBlock for clarity with multiplier.
 
 class ResNetBlock(nn.Module):
     """
     Pre-activation ResNet Block based on Figure 3 and Table I.
-    Uses Depthwise Separable Convolutions.
+    Uses Depthwise Separable Convolutions with depth_multiplier=2.
     """
-    def __init__(self, channels, kernel_size=3, dilation=(1,1)):
+    def __init__(self, channels, kernel_size=3, dilation=(1,1), depth_multiplier=2): # Added depth_multiplier argument
         super().__init__()
         # Effective padding calculation for dilation
         eff_k_h = (kernel_size - 1) * dilation[0] + 1
         eff_k_w = (kernel_size - 1) * dilation[1] + 1
         padding = (eff_k_h // 2, eff_k_w // 2)
 
-        # Separable Conv 1 (includes BN -> ReLU -> Depthwise -> Pointwise(1x1))
+        # Intermediate channels after depthwise conv
+        inter_channels = channels * depth_multiplier # Key change for multiplier=2
+
+        # --- Separable Conv 1 ---
         self.bn1 = nn.BatchNorm2d(channels)
         self.relu1 = nn.ReLU(inplace=True)
-        # Paper uses depth_multiplier=2? Let's stick to 1 for now, standard separable conv
-        # Depthwise part
-        self.depthwise1 = nn.Conv2d(channels, channels, kernel_size, stride=1,
+        # Depthwise part: outputs inter_channels
+        self.depthwise1 = nn.Conv2d(channels, inter_channels, kernel_size, stride=1,
                                     padding=padding, dilation=dilation, groups=channels, bias=False)
-        # Pointwise part (1x1) - Projects back to 'channels' dimension
-        self.pointwise1 = nn.Conv2d(channels, channels, kernel_size=1, stride=1, padding=0, bias=False)
+        # Pointwise part (1x1): projects inter_channels back to channels
+        self.pointwise1 = nn.Conv2d(inter_channels, channels, kernel_size=1, stride=1, padding=0, bias=False)
 
-        # Separable Conv 2
+        # --- Separable Conv 2 ---
         self.bn2 = nn.BatchNorm2d(channels)
         self.relu2 = nn.ReLU(inplace=True)
-        # Depthwise part
-        self.depthwise2 = nn.Conv2d(channels, channels, kernel_size, stride=1,
+        # Depthwise part: outputs inter_channels
+        self.depthwise2 = nn.Conv2d(channels, inter_channels, kernel_size, stride=1,
                                     padding=padding, dilation=dilation, groups=channels, bias=False)
-        # Pointwise part (1x1)
-        self.pointwise2 = nn.Conv2d(channels, channels, kernel_size=1, stride=1, padding=0, bias=False)
+        # Pointwise part (1x1): projects inter_channels back to channels
+        self.pointwise2 = nn.Conv2d(inter_channels, channels, kernel_size=1, stride=1, padding=0, bias=False)
 
 
     def forward(self, x):
         residual = x
 
+        # --- Block 1 ---
         out = self.bn1(x)
         out = self.relu1(out)
-        out = self.depthwise1(out)
-        out = self.pointwise1(out) # Completes the first separable conv block implied in Fig 3
+        out = self.depthwise1(out)  # Out: [B, channels*multiplier, S, F]
+        out = self.pointwise1(out) # Out: [B, channels, S, F] - Projects back
 
+        # --- Block 2 ---
         out = self.bn2(out)
         out = self.relu2(out)
-        out = self.depthwise2(out)
-        out = self.pointwise2(out) # Completes the second separable conv block
+        out = self.depthwise2(out)  # Out: [B, channels*multiplier, S, F]
+        out = self.pointwise2(out) # Out: [B, channels, S, F] - Projects back
 
         out += residual # Add residual connection
         return out
 
-class DeepRx(nn.Module):
+class DeepRx_MIMO_Equalizer(nn.Module):
     """
     DeepRx adaptation for MIMO-OFDM Equalization.
     Outputs estimated transmit symbols.
@@ -120,35 +104,31 @@ class DeepRx(nn.Module):
     Output dimension:
     - tx_est:    [B, S, F, Nt, 2]
     Internal Tensor Format: [B, C, S, F]
+
+    Uses ResNetBlocks with depth_multiplier=2 internally.
     """
     def __init__(self, n_tx=2, n_rx=2, num_blocks=11, channels=[64, 128, 256]):
         super().__init__()
         self.n_tx = n_tx
         self.n_rx = n_rx
+        # Specify depth_multiplier consistent with the paper
+        self.depth_multiplier = 2
 
         # Calculate input channels after flattening antennas and real/imag
-        # Input: csi_ls (Nt*Nr*2), tx_pilots (Nt*2), rx_signal (Nr*2)
         input_channels = (n_tx * n_rx * 2) + (n_tx * 2) + (n_rx * 2) # 8 + 4 + 4 = 16 for 2x2
 
         # --- Network Layers based on Table I ---
-        # Initial Convolution (Conv. In)
-        self.conv_in = nn.Conv2d(input_channels, channels[0], kernel_size=3, stride=1, padding=1, bias=False) # 64 filters
+        self.conv_in = nn.Conv2d(input_channels, channels[0], kernel_size=3, stride=1, padding=1, bias=False)
 
-        # ResNet Blocks
-        # Dilation values from paper Table 1 for 11 blocks (adjust indices for 0-based)
-        # Blocks 0,1: (1,1) -> channels[0] (64)
-        # Blocks 2,3,4: (2,3) -> channels[1] (128)
-        # Block 5: (3,6) -> channels[2] (256)
-        # Block 6,7,8: (2,3) -> channels[1] (128)  <- paper goes back down here
-        # Blocks 9,10: (1,1) -> channels[0] (64)
-        # Note: Paper architecture goes 64->128->256->128->64. Let's follow that.
-
+        # ResNet Blocks - Instantiate ResNetBlock with depth_multiplier=2
         self.resnet_blocks = nn.Sequential()
         current_channels = channels[0]
 
+        # --- Block Definitions based on Table I Channel Progression ---
+
         # Block 0, 1 (dilation 1,1), channels[0]
-        self.resnet_blocks.add_module("res0", ResNetBlock(current_channels, dilation=(1,1)))
-        self.resnet_blocks.add_module("res1", ResNetBlock(current_channels, dilation=(1,1)))
+        self.resnet_blocks.add_module("res0", ResNetBlock(current_channels, dilation=(1,1), depth_multiplier=self.depth_multiplier))
+        self.resnet_blocks.add_module("res1", ResNetBlock(current_channels, dilation=(1,1), depth_multiplier=self.depth_multiplier))
 
         # Block 2 (transition to channels[1])
         self.resnet_blocks.add_module("proj2", nn.Sequential(
@@ -156,11 +136,11 @@ class DeepRx(nn.Module):
             nn.Conv2d(current_channels, channels[1], kernel_size=1, stride=1, bias=False) # Projection
         ))
         current_channels = channels[1]
-        self.resnet_blocks.add_module("res2", ResNetBlock(current_channels, dilation=(2,3)))
+        self.resnet_blocks.add_module("res2", ResNetBlock(current_channels, dilation=(2,3), depth_multiplier=self.depth_multiplier))
 
         # Block 3, 4 (dilation 2,3), channels[1]
-        self.resnet_blocks.add_module("res3", ResNetBlock(current_channels, dilation=(2,3)))
-        self.resnet_blocks.add_module("res4", ResNetBlock(current_channels, dilation=(2,3)))
+        self.resnet_blocks.add_module("res3", ResNetBlock(current_channels, dilation=(2,3), depth_multiplier=self.depth_multiplier))
+        self.resnet_blocks.add_module("res4", ResNetBlock(current_channels, dilation=(2,3), depth_multiplier=self.depth_multiplier))
 
         # Block 5 (transition to channels[2])
         self.resnet_blocks.add_module("proj5", nn.Sequential(
@@ -168,7 +148,7 @@ class DeepRx(nn.Module):
             nn.Conv2d(current_channels, channels[2], kernel_size=1, stride=1, bias=False) # Projection
         ))
         current_channels = channels[2]
-        self.resnet_blocks.add_module("res5", ResNetBlock(current_channels, dilation=(3,6))) # Paper uses (3,6) here
+        self.resnet_blocks.add_module("res5", ResNetBlock(current_channels, dilation=(3,6), depth_multiplier=self.depth_multiplier)) # Paper uses (3,6) here
 
         # Block 6 (transition back to channels[1])
         self.resnet_blocks.add_module("proj6", nn.Sequential(
@@ -176,11 +156,11 @@ class DeepRx(nn.Module):
             nn.Conv2d(current_channels, channels[1], kernel_size=1, stride=1, bias=False) # Projection
         ))
         current_channels = channels[1]
-        self.resnet_blocks.add_module("res6", ResNetBlock(current_channels, dilation=(2,3)))
+        self.resnet_blocks.add_module("res6", ResNetBlock(current_channels, dilation=(2,3), depth_multiplier=self.depth_multiplier))
 
         # Block 7, 8 (dilation 2,3), channels[1]
-        self.resnet_blocks.add_module("res7", ResNetBlock(current_channels, dilation=(2,3)))
-        self.resnet_blocks.add_module("res8", ResNetBlock(current_channels, dilation=(2,3)))
+        self.resnet_blocks.add_module("res7", ResNetBlock(current_channels, dilation=(2,3), depth_multiplier=self.depth_multiplier))
+        self.resnet_blocks.add_module("res8", ResNetBlock(current_channels, dilation=(2,3), depth_multiplier=self.depth_multiplier))
 
         # Block 9 (transition back to channels[0])
         self.resnet_blocks.add_module("proj9", nn.Sequential(
@@ -188,20 +168,18 @@ class DeepRx(nn.Module):
             nn.Conv2d(current_channels, channels[0], kernel_size=1, stride=1, bias=False) # Projection
         ))
         current_channels = channels[0]
-        self.resnet_blocks.add_module("res9", ResNetBlock(current_channels, dilation=(1,1)))
+        self.resnet_blocks.add_module("res9", ResNetBlock(current_channels, dilation=(1,1), depth_multiplier=self.depth_multiplier))
 
         # Block 10 (dilation 1,1), channels[0]
-        self.resnet_blocks.add_module("res10", ResNetBlock(current_channels, dilation=(1,1)))
+        self.resnet_blocks.add_module("res10", ResNetBlock(current_channels, dilation=(1,1), depth_multiplier=self.depth_multiplier))
 
         # Final Batch Norm and ReLU before output conv
         self.bn_out = nn.BatchNorm2d(current_channels)
         self.relu_out = nn.ReLU(inplace=True)
 
         # Output Convolution (Conv. Out)
-        # Output should be the estimated tx_signal: [B, S, F, Nt, 2]
-        # So, need Nt*2 output channels
         output_channels = n_tx * 2
-        self.conv_out = nn.Conv2d(current_channels, output_channels, kernel_size=3, stride=1, padding=1, bias=True) # Use bias for output layer
+        self.conv_out = nn.Conv2d(current_channels, output_channels, kernel_size=3, stride=1, padding=1, bias=True)
 
     def forward(self, csi_ls, tx_pilots, rx_signal):
         """
@@ -218,17 +196,14 @@ class DeepRx(nn.Module):
         tx_pilots_r = tx_pilots.permute(0, 3, 4, 1, 2).reshape(B, self.n_tx * 2, S, F)
         rx_signal_r = rx_signal.permute(0, 3, 4, 1, 2).reshape(B, self.n_rx * 2, S, F)
 
-        # Concatenate along the channel dimension
         x = torch.cat([csi_ls_r, tx_pilots_r, rx_signal_r], dim=1)
 
-        # Pass through the network
         x = self.conv_in(x)
         x = self.resnet_blocks(x)
         x = self.bn_out(x)
         x = self.relu_out(x)
         x = self.conv_out(x) # Output shape: [B, Nt*2, S, F]
 
-        # Reshape output to [B, S, F, Nt, 2]
         output = x.reshape(B, self.n_tx, 2, S, F).permute(0, 3, 4, 1, 2)
 
         return output
@@ -438,6 +413,7 @@ if __name__ == '__main__':
 
 
     train_model(model, dataloader_train,dataloader_val, criterion, optimizer,scheduler, epochs, device, checkpoint_dir)
+
 
 
 

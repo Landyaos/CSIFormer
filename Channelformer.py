@@ -9,7 +9,6 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader, random_split
 import hdf5storage
 import torch.optim as optim
-import math
 import gc
 
 # --- Native PyTorch Modules based Blocks (from previous implementation) ---
@@ -92,8 +91,8 @@ class DecoderBlockNative(nn.Module):
 
 # --- Main Offline Channelformer Model (Alternative Reshape) ---
 
-class ChannelformerMIMOOfflineAltReshape(nn.Module):
-    def __init__(self, n_subc, n_sym, n_tx, n_rx, n_pilot_sym,
+class Channelformer(nn.Module):
+    def __init__(self, n_subc=224, n_sym=14, n_tx=2, n_rx=2, n_pilot_sym=14,
                  embed_dim=128, num_heads=8, n_encoder_filters=5,
                  n_decoder_filters=12, num_decoder_blocks=3,
                  encoder_kernel_size=3, decoder_kernel_size=5,
@@ -195,71 +194,40 @@ class ChannelformerMIMOOfflineAltReshape(nn.Module):
 
         return output
 
-# --- Example Usage ---
-if __name__ == '__main__':
-    # MIMO-OFDM Parameters (Example)
-    BATCH_SIZE = 4
-    N_SUBC = 72
-    N_SYM = 14
-    N_TX = 2
-    N_RX = 2
-    N_PILOT_SYM = 2
+# ##### 数据集预处理
 
-    # Model Hyperparameters (Match paper/adjust as needed)
-    EMBED_DIM = 128
-    NUM_HEADS = 8
-    N_ENCODER_FILTERS = 5
-    N_DECODER_FILTERS = 12
-    NUM_DECODER_BLOCKS = 3
-    ENCODER_KERNEL_SIZE = 3
-    DECODER_KERNEL_SIZE = 5
-    DROPOUT = 0.0
+class MIMOOFDMDataset(Dataset):
+    
+    def __init__(self, csi_ls, csi_label):
+        """
+        初始化数据集
+        :param csi_ls: 导频CSI矩阵  [data_size, n_subc, n_sym, n_tx, n_rx, 2]
+        :param csi: CSI矩阵 [data_size, n_subc, n_sym, n_tx, n_rx, 2]
+        :param csi_pre: 历史CSI矩阵 [data_size, n_frame, n_subc, n_sym, n_tx, n_rx, 2]
+        """
+        self.csi_ls = csi_ls
+        self.csi_label = csi_label
 
-    # Instantiate the model with the alternative reshape logic
-    model = ChannelformerMIMOOfflineAltReshape(
-        n_subc=N_SUBC, n_sym=N_SYM, n_tx=N_TX, n_rx=N_RX, n_pilot_sym=N_PILOT_SYM,
-        embed_dim=EMBED_DIM, num_heads=NUM_HEADS,
-        n_encoder_filters=N_ENCODER_FILTERS, n_decoder_filters=N_DECODER_FILTERS,
-        num_decoder_blocks=NUM_DECODER_BLOCKS,
-        encoder_kernel_size=ENCODER_KERNEL_SIZE,
-        decoder_kernel_size=DECODER_KERNEL_SIZE,
-        dropout=DROPOUT
-    )
+    def __len__(self):
+        """返回数据集大小"""
+        return self.csi_label.size(0)
 
-    # Create dummy input data (LS estimates at pilot symbols)
-    dummy_csi_ls = torch.randn(BATCH_SIZE, N_SUBC, N_PILOT_SYM, N_TX, N_RX, 2)
-
-    # Pass data through the model
-    print(f"Input shape: {dummy_csi_ls.shape}")
-    estimated_csi = model(dummy_csi_ls)
-
-    # Check output shape
-    print(f"Output shape: {estimated_csi.shape}")
-    expected_shape = (BATCH_SIZE, N_SUBC, N_SYM, N_TX, N_RX, 2)
-    print(f"Expected shape: {expected_shape}")
-    assert estimated_csi.shape == expected_shape
-
-    # Print model summary (optional, requires torchinfo)
-    try:
-        from torchinfo import summary
-        summary(model, input_data=dummy_csi_ls)
-    except ImportError:
-        print("\nInstall torchinfo for model summary: pip install torchinfo")
-    except Exception as e:
-         print(f"\nError during torchinfo summary: {e}")
-
-
-
-
+    def __getitem__(self, idx):
+        """
+        返回单个样本
+        :param idx: 样本索引
+        :return: 发射导频、接收导频、CSI矩阵
+        """
+        return self.csi_ls[idx], self.csi_label[idx]
 
 def dataset_preprocess(data):
     # 将数据转换为PyTorch张量
-    tx_signal = torch.tensor(data['txSignalData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, 2]
-    rx_signal = torch.tensor(data['rxSignalData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_rx, 2]
-    csi = torch.tensor(data['csiLabelData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
+    csi_ls = torch.tensor(data['csiLSData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
+    csi_label = torch.tensor(data['csiLabelData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
     del data
     gc.collect()
-    return MIMODataset(tx_signal, rx_signal, csi)
+    return MIMOOFDMDataset(csi_ls, csi_label)
+
 
 class ComplexMSELoss(nn.Module):
     def __init__(self):
@@ -282,7 +250,7 @@ class ComplexMSELoss(nn.Module):
 
 
 # 模型训练
-def train_model(model, dataloader_train, dataloader_val, criterion, optimizer, scheduler, epochs, device, checkpoint_dir):
+def train_model(model, dataloader_train, dataloader_val, criterion, optimizer, scheduler, epochs, device, checkpoint_dir='./checkpoints'):
     os.makedirs(checkpoint_dir, exist_ok=True)
     best_loss = float('inf')
     start_epoch = 0
@@ -306,24 +274,23 @@ def train_model(model, dataloader_train, dataloader_val, criterion, optimizer, s
     
     # 分epoch训练
 
-    for epoch in range(start_epoch, epochs):
+    for epoch in range(1, epochs):
         print(f"\nEpoch [{epoch + 1}/{epochs}]")
         # --------------------- Train ---------------------
         model.train()
         total_loss = 0
-        for batch_idx, (csi, rx_signal, tx_signal) in enumerate(dataloader_train):
-            csi = csi.to(device)
-            rx_signal = rx_signal.to(device)
-            tx_signal = tx_signal.to(device)
+        for batch_idx, (csi_ls_train, csi_label) in enumerate(dataloader_train):
+            csi_ls_train = csi_ls_train.to(device)
+            csi_label = csi_label.to(device)
             optimizer.zero_grad()
-            output = model(csi, rx_signal)
-            loss = criterion(output, tx_signal)
-            loss.backward()
+            csi_dec = model(csi_ls_train)
+            joint_loss = criterion(csi_dec, csi_label)
+            joint_loss.backward()
             optimizer.step()
-            total_loss += loss.item()
+            total_loss += joint_loss.item()
 
             if (batch_idx + 1) % 50 == 0:
-                print(f"Epoch {epoch + 1}, Batch {batch_idx + 1}/{len(dataloader_train)}, Loss: {loss.item():.4f}")
+                print(f"Epoch {epoch + 1}, Batch {batch_idx + 1}/{len(dataloader_train)}, Loss: {joint_loss.item():.4f}")
         
         train_loss = total_loss / len(dataloader_train)
         # 学习率调度器步进（根据策略）
@@ -336,13 +303,12 @@ def train_model(model, dataloader_train, dataloader_val, criterion, optimizer, s
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
-            for batch_idx, (csi, rx_signal, tx_signal) in enumerate(dataloader_val):
-                csi = csi.to(device)
-                rx_signal = rx_signal.to(device)
-                tx_signal = tx_signal.to(device)
-                output = model(csi, rx_signal)
-                loss = criterion(output, tx_signal)
-                val_loss += loss.item()
+            for batch_idx, (csi_ls_val, csi_label) in enumerate(dataloader_val):
+                csi_ls_val = csi_ls_val.to(device)
+                csi_label = csi_label.to(device)
+                csi_dec = model(csi_ls_val)
+                total_loss = criterion(csi_dec, csi_label)
+                val_loss += total_loss.item()
         
         val_loss /= len(dataloader_val)
         print(f"Val Loss: {val_loss:.4f}")
@@ -368,32 +334,23 @@ def train_model(model, dataloader_train, dataloader_val, criterion, optimizer, s
                 'best_loss': best_loss,
             }, best_path)
             print(f"[INFO] Best model saved at epoch {epoch + 1}, val_loss={val_loss:.4f}")
-        # 3) 每隔5个epoch保存当前epoch的权重
-        if (epoch+1) % 5 == 0:
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict() if scheduler is not None else None,
-                'best_loss': best_loss,
-            }, os.path.join(checkpoint_dir, model.__class__.__name__ + '_epoch_'+str(epoch)+'.pth'))
 
 
 if __name__ == '__main__':
 
     print("load data")
-    data_train = hdf5storage.loadmat('/root/autodl-tmp/data/raw/trainData.mat')
-    data_val = hdf5storage.loadmat('/root/autodl-tmp/data/raw/valData.mat')
-    checkpoint_dir = '/root/autodl-tmp/checkpoints'
-    # checkpoint_dir = './checkpoints'
-    # data_train = hdf5storage.loadmat('./data/raw/trainData.mat')
-    # data_val = hdf5storage.loadmat('./data/raw/valData.mat')
+    # data_train = hdf5storage.loadmat('/root/autodl-tmp/data/raw/trainData.mat')
+    # data_val = hdf5storage.loadmat('/root/autodl-tmp/data/raw/valData.mat')
+    # checkpoint_dir = '/root/autodl-tmp/checkpoints'
+    checkpoint_dir = './checkpoints'
+    data_train = hdf5storage.loadmat('F:/dataset/valDataFinal.mat')
+    data_val = hdf5storage.loadmat('F:/dataset/valDataFinal.mat')
     print("load done")
 
     dataset_train = dataset_preprocess(data_train)
     dataset_val = dataset_preprocess(data_val)
 
-    model = DNNResEQWithAttention()
+    model = Channelformer()
     # 计算参数量
     def count_parameters(model):
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
