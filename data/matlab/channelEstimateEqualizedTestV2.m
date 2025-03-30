@@ -1,6 +1,6 @@
 clear;
 clc;%3.1801e+09  3.1801e+09  3.1801e+09  4.2397e+09 4.1451e+09 102832043
-%% python脚本加载3.4429e+09
+%% python脚本加载3.4429e+09 3.6214e+09
 miPyPath = 'C:\Users\stone\AppData\Local\Programs\Python\Python312\python.exe';
 lenPyPath = 'D:\Python\python.exe';
 pyenv('Version', lenPyPath)
@@ -403,7 +403,7 @@ mse_csi_channelformer = zeros(length(snrValues), 1);
 % TODO
 
 % 每个SNR统计子帧的数量
-numCountFrame = 20;                                        
+numCountFrame = 30;                                        
 csiPreTemp = zeros(3, numValidSubc, numSym, numTx, numRx);
 
 for idx = 1:length(snrValues)
