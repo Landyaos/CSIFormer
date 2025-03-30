@@ -1,19 +1,19 @@
 clear;
-clc;
-%% python脚本加载
+clc;%3.1801e+09  3.1801e+09  3.1801e+09  4.2397e+09 4.1451e+09 102832043
+%% python脚本加载3.4429e+09
 miPyPath = 'C:\Users\stone\AppData\Local\Programs\Python\Python312\python.exe';
 lenPyPath = 'D:\Python\python.exe';
 pyenv('Version', lenPyPath)
 
 csiEncoderModel = py.csiEncoder.load_model();
 csiFormerModel = py.csiFormer.load_model();
-csiFormerLiteModel = py.csiFormerLite.load_model();
+% csiFormerLiteModel = py.csiFormerLite.load_model();
 csiFormerStudentModel = py.csiFormerStudent.load_model();
 
-eqDnnModel = py.eqDnn.load_model();
+% eqDnnModel = py.eqDnn.load_model();
 eqDnnProModel = py.eqDnnPro.load_model();
 eqDnnProStudentModel = py.eqDnnProStudent.load_model();
-ceDnnModel = py.ceDnn.load_model();
+% ceDnnModel = py.ceDnn.load_model();
 
 deeprxModel = py.deepRx.load_model();
 channelformerModel = py.channelformer.load_model();
@@ -339,6 +339,8 @@ maxSeed = 2^32 - 1;   % 3.4625e+09 2.4608e+09 4.0359e+09 2.7777e+09  3.4992e+09 
 % 3.3813e+09
 
 seed = randi([minSeed, maxSeed]);
+% seed = 3.4070e+09;
+
 seed
 % 信道模型
 mimoChannel = comm.MIMOChannel(...
@@ -352,7 +354,7 @@ mimoChannel = comm.MIMOChannel(...
     'FadingDistribution', 'Rayleigh', ...
     'PathGainsOutputPort', true,...
     'RandomStream', 'mt19937ar with seed', ...  % 使用固定种子的随机数流
-    'Seed', 3.4070e+09);   % 开启路径增益输出
+    'Seed', seed);   % 开启路径增益输出
 
 mimoChannelInfo = info(mimoChannel);
 pathFilters = mimoChannelInfo.ChannelFilterCoefficients;
@@ -401,7 +403,7 @@ mse_csi_channelformer = zeros(length(snrValues), 1);
 % TODO
 
 % 每个SNR统计子帧的数量
-numCountFrame = 10;                                        
+numCountFrame = 20;                                        
 csiPreTemp = zeros(3, numValidSubc, numSym, numTx, numRx);
 
 for idx = 1:length(snrValues)
@@ -525,8 +527,8 @@ for idx = 1:length(snrValues)
         loss_channelformer = loss_channelformer + immse(channelformer_data, hPerfect);
 
         % LS信道估计
-        csi_ls = lsChannelEst(rxPilotSignal, pilotSignal, dataIndices, pilotIndices);
-        loss_ls = loss_ls + immse(csi_ls, hPerfect);
+        csi_ls_ce = lsChannelEst(rxPilotSignal, pilotSignal, dataIndices, pilotIndices);
+        loss_ls = loss_ls + immse(csi_ls_ce, hPerfect);
 
         % MMSE信道估计
         csi_mmse = mmseChannelEst(rxPilotSignal, pilotSignal, dataIndices, pilotIndices, t_rms, delta_f, power_r, noiseVar);
@@ -588,7 +590,7 @@ for idx = 1:length(snrValues)
         % ser_ls_zf(idx, :) = er_ls_zf(txStream, rxStream_ls_zf);
 
         % LS信道 MMSE均衡
-        rxSignal_ls_mmse = myMMSEequalize(csi_ls, rxDataSignal, noiseVar);
+        rxSignal_ls_mmse = myMMSEequalize(csi_ls_ce, rxDataSignal, noiseVar);
         rxStream_ls_mmse = pskdemod(reshape(rxSignal_ls_mmse,[],1),M);
         ser_ls_mmse(idx, :) = er_ls_mmse(txStream, rxStream_ls_mmse);
 
@@ -613,6 +615,7 @@ for idx = 1:length(snrValues)
     mse_csi_mmse(idx) = loss_mmse / numCountFrame;
     mse_csi_csiFormer(idx) = loss_csiFormer / numCountFrame;
     mse_csi_csiEncoder(idx) = loss_csiEncoder / numCountFrame;
+    mse_csi_csiFormerStudent(idx) = loss_csiFormerStudent / numCountFrame;
     mse_csi_channelformer(idx) = loss_channelformer / numCountFrame;
 end
 
@@ -625,12 +628,27 @@ filename = timestampStr+'.mat';
 
 save(filename, ...
     'seed', ...
-    'ser_ideal_zf', 'ser_ideal_mmse', 'ser_ideal_eqDnnPro', ...
-    'ser_ls_zf', 'ser_ls_mmse', 'ser_ls_eqDnnPro', ...
-    'ser_mmse_zf', 'ser_mmse_mmse', ...
+    'ser_ideal_zf', ...
+    'ser_ideal_mmse', ...
+    'ser_ideal_eqDnnPro',...
+    'ser_ls_zf', ...
+    'ser_ls_mmse', ...
+    'ser_ls_eqDnnPro', ...
+    'ser_mmse_zf', ...
+    'ser_mmse_mmse', ...
     'ser_csiEncoder_mmse', ...
-    'ser_csiFormer_zf', 'ser_csiFormer_mmse', 'ser_csiFormer_eqDnnPro', 'ser_csiFormerStudent_eqDnnProStudent', ...
-    'mse_csi_ls', 'mse_csi_mmse', 'mse_csi_csiEncoder', 'mse_csi_csiFormer', 'mse_csi_csiFormerStudent');
+    'ser_csiFormer_zf', ...
+    'ser_csiFormer_mmse', ...
+    'ser_csiFormer_eqDnnPro', ...
+    'ser_csiFormerStudent_eqDnnProStudent', ...
+    'mse_csi_ls', ...
+    'mse_csi_mmse', ...
+    'mse_csi_csiEncoder', ...
+    'mse_csi_csiFormer', ...
+    'mse_csi_csiFormerStudent', ...
+    'ser_deeprx', ...
+    'ser_channelformer_mmse', ...
+    'mse_csi_channelformer');
 
 %% 图形绘制部分
 % 手动定义对比鲜明的颜色矩阵
@@ -707,6 +725,7 @@ hold on;
 
 plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'LS+MMSE');
 plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE+MMSE');
+plot(snrValues, ser_deeprx(:,1),     '-d', 'Color', colors(7,:),  'LineWidth', 1, 'DisplayName', 'DeepRx')
 plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(6,:), 'LineWidth', 1.5, 'DisplayName', 'CSIFormer+MMSE');
 plot(snrValues, ser_csiFormer_eqDnnPro(:,1),'--d', 'Color', colors(4,:), 'LineWidth', 1.5, 'DisplayName', 'JointCEEQ');
 plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(5,:),  'LineWidth', 1.5, 'DisplayName', 'Ideal+MMSE');

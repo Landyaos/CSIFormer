@@ -265,75 +265,7 @@ class DeepRx(nn.Module):
         # Reshape output to [B, S, F, Nt, 2]
         output = x.reshape(B, self.n_tx, 2, S, F).permute(0, 3, 4, 1, 2)
 
-        return output
-
-def dataset_preprocess(data):
-    # 将数据转换为PyTorch张量
-    pilot_mask = torch.zeros((256, 14, 2 , 2), dtype=torch.float32)
-    indices_ant1 = torch.tensor([
-        17, 21, 25, 29, 33, 37, 41, 45, 49, 53, 57, 61, 65, 69, 73, 77,
-        81, 85, 89, 93, 97, 101, 105, 109, 113, 117, 121, 125, 133, 137,
-        141, 145, 149, 153, 157, 161, 165, 169, 173, 177, 181, 185, 189,
-        193, 197, 201, 205, 209, 213, 217, 221, 225, 229, 233, 237, 241
-    ])-1
-
-    indices_ant2 = torch.tensor([
-        18, 22, 26, 30, 34, 38, 42, 46, 50, 54, 58, 62, 66, 70, 74, 78,
-        82, 86, 90, 94, 98, 102, 106, 110, 114, 118, 122, 126, 130, 134,
-        138, 142, 146, 150, 154, 158, 162, 166, 170, 174, 178, 182, 186,
-        190, 194, 198, 202, 206, 210, 214, 218, 222, 226, 230, 234, 240
-    ])-1
-
-    indices = torch.tensor(
-        [17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 
-        37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 
-        57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 
-        77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 
-        97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 
-        114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 130, 
-        131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 
-        147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 
-        163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 
-        179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 
-        195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 
-        211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 
-        227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241]
-    )-1
-
-    pilot_mask[indices_ant1,:,0,:] = 1
-    pilot_mask[indices_ant2,:,1,:] = 1
-    pilot_mask = pilot_mask[indices]
-
-    csi_ls = torch.tensor(data['csiLSData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
-    tx_signal = torch.tensor(data['txSignalData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, 2]
-    rx_signal = torch.tensor(data['rxSignalData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_rx, 2]
-    csi = torch.tensor(data['csiLabelData'], dtype=torch.float32) #[data_size, n_subc, n_sym, n_tx, n_rx, 2]
-    
-    del data
-    gc.collect()
-    return MIMODataset(tx_signal, rx_signal, csi_ls, pilot_mask)
-
-
-
-class ComplexMSELoss(nn.Module):
-    def __init__(self):
-        """
-        :param alpha: 第一部分损失的权重
-        :param beta:  第二部分损失的权重
-        """
-        super(ComplexMSELoss, self).__init__()
-
-
-    def forward(self, csi_est, csi_label):
-        """
-        复数信道估计的均方误差 (MSE) 损失函数。
-        x_py: (batch_size, csi_matrix, 2)，估计值
-        y_py: (batch_size, csi_matrix, 2)，真实值
-        """
-        diff = csi_est - csi_label  # 差值，形状保持一致
-        loss = torch.mean(torch.square(torch.sqrt(torch.square(diff[...,0]) + torch.square(diff[...,1]))))
-        return loss
-        
+        return output 
 
 
 def load_model():
@@ -347,7 +279,7 @@ def load_model():
 
 def infer(model, csi_ls, tx_signal, rx_signal):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    pilot = torch.tensor(csi_ls, dtype=torch.float32) * pilot_mask
+    pilot = torch.tensor(tx_signal, dtype=torch.float32) * pilot_mask
     pilot = torch.unsqueeze(pilot.to(device),0).contiguous()
     csi_ls = torch.unsqueeze(torch.tensor(csi_ls, dtype=torch.float32).to(device),0).contiguous()
     rx_signal = torch.unsqueeze(torch.tensor(rx_signal, dtype=torch.float32).to(device),0).contiguous()

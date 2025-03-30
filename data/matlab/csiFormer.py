@@ -207,8 +207,8 @@ class CSIFormer(nn.Module):
 def load_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = CSIFormer().to(device)
-    model.load_state_dict(torch.load(os.path.join('../../checkpoints', model.__class__.__name__ + '_v3.pth'), map_location=device)['model_state_dict'])
-    print('load model path : ',os.path.join('../../checkpoints', model.__class__.__name__ + '_v3.pth'))
+    model.load_state_dict(torch.load(os.path.join('../../checkpoints', model.__class__.__name__ + '_v1_best.pth'), map_location=device)['model_state_dict'])
+    print('load model path : ',os.path.join('../../checkpoints', model.__class__.__name__ + '_v1_best.pth'))
     return model
 
 

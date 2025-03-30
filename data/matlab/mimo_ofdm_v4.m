@@ -56,8 +56,7 @@ numFrameSymbols = numDataSubc * numSym * numTx;
 % 求 dataIndices 在 validSubcIndices 中的相对位置
 [~, valid2DataIndices] = ismember(dataIndices, validSubcIndices);
 
-validSubcIndices'
-xx
+
 % OFDM解调器
 ofdmDemod = comm.OFDMDemodulator('FFTLength', numSubc, ...
                                   'NumGuardBandCarriers', numGuardBands, ...
