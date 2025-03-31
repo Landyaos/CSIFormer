@@ -1,8 +1,15 @@
 clear;
 clc;%1.0908e+09
-filename = '20250213_204633.mat';
-filename = '20250330_091218.mat';
-snrValues = 0:3:50;
+filename = 'raw/20250213_204633.mat';
+% filename = '20250330_152257.mat'; %
+% filename = '20250330_101645.mat';
+filename = '20250330_100844.mat'; %%%
+% filename = '20250330_094826.mat';
+filename = '20250330_094523.mat';
+% filename = '20250330_093717.mat'; %%
+% filename = '20250330_183615.mat'; %%
+
+snrValues = 0:3:30;
 
 load(filename, ...
     'seed', ...
@@ -40,12 +47,11 @@ colors = [
     0.4940, 0.1840, 0.5560;  % 紫色 (Purple)
 
 ];
-
 % --- 图1：信道估计 MSE LOSS 曲线对比 ---
 figure;
 hold on;
 plot(snrValues, mse_csi_ls,        '-o', 'Color', colors(1,:), 'LineWidth', 1, 'DisplayName', 'LS');
-plot(snrValues, mse_csi_mmse,      '-d', 'Color', colors(2,:), 'LineWidth', 1, 'DisplayName', 'MMSE');
+plot(snrValues, mse_csi_mmse,      '-d', 'Color', colors(2,:), 'LineWidth', 1, 'DisplayName', 'LMMSE');
 plot(snrValues, mse_csi_csiEncoder, '-s', 'Color', colors(3,:), 'LineWidth', 1, 'DisplayName', 'CSIEncoder');
 plot(snrValues, mse_csi_channelformer, '-d', 'Color', colors(5,:), 'LineWidth', 1, 'DisplayName', 'Channelformer');
 plot(snrValues, mse_csi_csiFormer,  '-p', 'Color', colors(4,:), 'LineWidth', 1, 'DisplayName', 'CSIFormer');
@@ -64,8 +70,9 @@ figure;
 hold on;
 
 plot(snrValues, ser_ls_mmse(:,1),        '-o', 'Color', colors(1,:),  'LineWidth', 1, 'DisplayName', 'LS');
+plot(snrValues, ser_mmse_mmse(:,1),        '-o', 'Color', colors(6,:),  'LineWidth', 1, 'DisplayName', 'LMMSE');
 plot(snrValues, ser_csiEncoder_mmse(:,1),  '-*', 'Color', colors(2,:),  'LineWidth', 0.5, 'DisplayName', 'CSIEncoder');
-plot(snrValues, ser_channelformer_mmse,  '-s', 'Color', colors(5,:),  'LineWidth', 0.5, 'DisplayName', 'Channelformer');
+plot(snrValues, ser_channelformer_mmse(:,1),  '-s', 'Color', colors(5,:),  'LineWidth', 0.5, 'DisplayName', 'Channelformer');
 plot(snrValues, ser_csiFormer_mmse(:,1), '-p', 'Color', colors(4,:), 'LineWidth', 1.5, 'DisplayName', 'CSIFormer');
 plot(snrValues, ser_ideal_mmse(:,1),     '-d', 'Color', colors(3,:),  'LineWidth', 1, 'DisplayName', 'Ideal')
 
@@ -103,6 +110,7 @@ hold on;
 
 plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'LS+MMSE');
 plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE+MMSE');
+plot(snrValues, ser_deeprx(:,1),     '-d', 'Color', colors(7,:),  'LineWidth', 1, 'DisplayName', 'DeepRx')
 plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(6,:), 'LineWidth', 1.5, 'DisplayName', 'CSIFormer+MMSE');
 plot(snrValues, ser_csiFormer_eqDnnPro(:,1),'--d', 'Color', colors(4,:), 'LineWidth', 1.5, 'DisplayName', 'JointCEEQ');
 plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(5,:),  'LineWidth', 1.5, 'DisplayName', 'Ideal+MMSE');

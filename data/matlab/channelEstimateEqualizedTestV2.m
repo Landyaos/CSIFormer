@@ -336,10 +336,12 @@ ofdmMod = comm.OFDMModulator('FFTLength', numSubc, ...
 minSeed = 0;
 maxSeed = 2^32 - 1;   % 3.4625e+09 2.4608e+09 4.0359e+09 2.7777e+09  3.4992e+09 2.1401e+09  2.3742e+09
 
-% 3.3813e+09
+% 3.3813e+09 3.4070e+09
 
 seed = randi([minSeed, maxSeed]);
-% seed = 3.4070e+09;
+seed = 102832043;
+% 每个SNR统计子帧的数量
+numCountFrame = 25;   
 
 seed
 % 信道模型
@@ -401,9 +403,7 @@ mse_csi_channelformer = zeros(length(snrValues), 1);
 
 % 信道均衡MSE LOSS 数据对比
 % TODO
-
-% 每个SNR统计子帧的数量
-numCountFrame = 30;                                        
+                                     
 csiPreTemp = zeros(3, numValidSubc, numSym, numTx, numRx);
 
 for idx = 1:length(snrValues)
@@ -570,6 +570,11 @@ for idx = 1:length(snrValues)
         rxStream_csiFormer_mmse = pskdemod(reshape(eqSignal_csiFormer_mmse, [], 1), M);
         ser_csiFormer_mmse(idx, :) = er_csiFormer_mmse(txStream, rxStream_csiFormer_mmse);
 
+        % AI channelformer+ MMSE 信道均衡
+        eqSignal_channelformer_mmse = myMMSEequalize(channelformer_data, rxDataSignal, noiseVar);
+        rxStream_channelformer_mmse = pskdemod(reshape(eqSignal_channelformer_mmse, [], 1), M);
+        ser_channelformer_mmse(idx, :) = er_channelformer_mmse(txStream, rxStream_channelformer_mmse);
+
         % AI csiFormer+eqDnn 信道均衡
         eqSignal_csiFormer_eqDnnPro = eqDnnProInfer(eqDnnProModel, csiFormer_valid, finalSignal(validSubcIndices,:,:));
         % eqSignal_csiFormer_eqDnnPro = eqDnnProStudentInfer(eqDnnProStudentModel, csiFormer_valid, finalSignal(validSubcIndices,:,:));
@@ -582,7 +587,7 @@ for idx = 1:length(snrValues)
         eqSignal_csiFormerStudent_eqDnnProStudent = eqSignal_csiFormerStudent_eqDnnProStudent(valid2DataIndices,:,:);
         rxStream_csiFormerStudent_eqDnnProStudent = pskdemod(reshape(eqSignal_csiFormerStudent_eqDnnProStudent, [], 1), M);
         ser_csiFormerStudent_eqDnnProStudent(idx, :) = er_csiFormerStudent_eqDnnProStudent(txStream, rxStream_csiFormerStudent_eqDnnProStudent);
-       
+        
 
         % % LS信道 ZF均衡
         % rxSignal_ls_zf = myZFequalize(csi_ls, rxDataSignal);
@@ -687,7 +692,7 @@ hold on;
 
 plot(snrValues, ser_ls_mmse(:,1),        '-o', 'Color', colors(1,:),  'LineWidth', 1, 'DisplayName', 'LS');
 plot(snrValues, ser_csiEncoder_mmse(:,1),  '-*', 'Color', colors(2,:),  'LineWidth', 0.5, 'DisplayName', 'CSIEncoder');
-plot(snrValues, ser_channelformer_mmse,  '-s', 'Color', colors(5,:),  'LineWidth', 0.5, 'DisplayName', 'Channelformer');
+plot(snrValues, ser_channelformer_mmse(:,1),  '-s', 'Color', colors(5,:),  'LineWidth', 0.5, 'DisplayName', 'Channelformer');
 plot(snrValues, ser_csiFormer_mmse(:,1), '-p', 'Color', colors(4,:), 'LineWidth', 1.5, 'DisplayName', 'CSIFormer');
 plot(snrValues, ser_ideal_mmse(:,1),     '-d', 'Color', colors(3,:),  'LineWidth', 1, 'DisplayName', 'Ideal')
 
@@ -775,32 +780,6 @@ set(gca, 'YScale', 'log');  % Y轴使用对数刻度
 hold off;
 
 
-% 
-% % --- 图x：SER 误码率曲线 ---
-% figure;
-% hold on;
-% % 使用 MATLAB 内置的颜色序列（共11种）
-% colors = lines(11);
-% 
-% plot(snrValues, ser_ideal_zf(:,1),       '-o', 'Color', colors(1,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect ZF');
-% plot(snrValues, ser_ideal_mmse(:,1),     '-s', 'Color', colors(2,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect MMSE');
-% plot(snrValues, ser_ideal_eqDnnPro(:,1),    '--v', 'Color', colors(3,:),  'LineWidth', 1.5, 'DisplayName', 'Perfect EQDNNPro');
-% plot(snrValues, ser_ls_zf(:,1),          '-^', 'Color', colors(4,:),  'LineWidth', 1.5, 'DisplayName', 'LS ZF');
-% plot(snrValues, ser_ls_mmse(:,1),        '-p', 'Color', colors(5,:),  'LineWidth', 1.5, 'DisplayName', 'LS MMSE');
-% plot(snrValues, ser_mmse_zf(:,1),        '-v', 'Color', colors(6,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE ZF');
-% plot(snrValues, ser_mmse_mmse(:,1),      '-*', 'Color', colors(7,:),  'LineWidth', 1.5, 'DisplayName', 'MMSE MMSE');
-% plot(snrValues, ser_csiEncoder_zf(:,1),  '-x', 'Color', colors(8,:),  'LineWidth', 1.5, 'DisplayName', 'AI csiEncoder ZF');
-% plot(snrValues, ser_csiFormer_zf(:,1),   '--o', 'Color', colors(9,:),  'LineWidth', 1.5, 'DisplayName', 'AI csiFormer ZF');
-% plot(snrValues, ser_csiFormer_mmse(:,1), '--s', 'Color', colors(10,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer MMSE');
-% plot(snrValues, ser_csiFormer_eqDnnPro(:,1),'--d', 'Color', colors(11,:), 'LineWidth', 1.5, 'DisplayName', 'AI csiFormer EQDNN');
-% 
-% grid on;
-% xlabel('SNR (dB)');
-% ylabel('Symbol Error Rate (SER)');
-% title('SER vs. SNR for Different Channel Estimation and Equalization Algorithms');
-% legend('Location', 'best');
-% set(gca, 'YScale', 'log');  % Y轴使用对数刻度
-% hold off;
 
 
 %% 自定义函数

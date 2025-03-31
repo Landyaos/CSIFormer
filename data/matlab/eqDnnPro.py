@@ -148,8 +148,8 @@ class DNNResEQWithAttention(nn.Module):
 def load_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = DNNResEQWithAttention().to(device)
-    print('load model :', os.path.join('../../checkpoints', model.__class__.__name__ + '_v1_best.pth'))
-    model.load_state_dict(torch.load(os.path.join('../../checkpoints', model.__class__.__name__ + '_v1_best.pth'), map_location=device)['model_state_dict'])
+    print('load model :', os.path.join('../../checkpoints', model.__class__.__name__ + '_v3.pth'))
+    model.load_state_dict(torch.load(os.path.join('../../checkpoints', model.__class__.__name__ + '_v3.pth'), map_location=device)['model_state_dict'])
     print('load success.')
     return model
 
